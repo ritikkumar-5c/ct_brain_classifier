@@ -35,6 +35,40 @@ aggregates slices into a single study embedding → one 3-class decision. The
 attention weights reveal *which slices* drove the decision; Grad-CAM++ then
 shows *where* within those slices.
 
+## Dataset & splits
+In-house CT-brain DICOM collection, indexed at the **series** level (one row =
+one `studyID/seriesID` folder of `*.dcm` slices, one label per series). A study
+may contribute several series, and every series of a study carries the same
+class — so the study counts below partition cleanly across the three classes.
+
+**Full set** — `csvs/ct_brain_3class_slice_count.csv` (18,360 series / 11,082
+studies / 2,243,121 slices):
+
+| Class | Series | Studies | Slices | Series share |
+|---|--:|--:|--:|--:|
+| `normal` | 3,819 | 2,349 | 420,487 | 20.8% |
+| `near_normal` | 6,596 | 3,909 | 793,371 | 35.9% |
+| `abnormal` | 7,945 | 4,824 | 1,029,263 | 43.3% |
+| **Total** | **18,360** | **11,082** | **2,243,121** | **100%** |
+
+The class imbalance (≈1 : 1.7 : 2.1) is handled in training via inverse-
+frequency `weighted_ce` (see *Notes / knobs*).
+
+**Splits** — `csvs/splits/{train,val,test}.csv`, a **70/15/15 study-grouped,
+class-stratified** split (`StratifiedGroupKFold`, `seed=42`). Splitting is by
+study, so **all series of a study stay in one split — no patient leakage**
+(verified disjoint: train∩val = train∩test = val∩test = ∅). Per-class series
+counts stay proportional across splits:
+
+| Split | Series | Studies | Slices | normal | near_normal | abnormal |
+|---|--:|--:|--:|--:|--:|--:|
+| train | 13,114 | 7,916 | 1,597,442 | 2,727 | 4,712 | 5,675 |
+| val | 2,623 | 1,583 | 327,753 | 546 | 942 | 1,135 |
+| test | 2,623 | 1,583 | 317,926 | 546 | 942 | 1,135 |
+
+These three CSVs are the `train_csv` / `val_csv` / `test_csv` defaults in
+`config.py`. Regenerate them with the **build → split** commands below.
+
 ## Install
 ```bash
 pip install -r requirements.txt

@@ -83,7 +83,7 @@ class Config:
     label_smoothing: float = 0.05             # softens the noisy normal/near_normal boundary
     grad_clip: float = 1.0
     early_stop_patience: int = 10             # epochs w/o val-F1 improvement
-    num_workers: int = 4
+    num_workers: int = 4                      # run is compute-bound (grad_ckpt recompute); workers don't change ~12s/it, so 4 = max RAM safety
     seed: int = 42
     # length-bucketed batching: group studies of similar bag size into the same batch
     # so mil_collate pads less -> the backbone wastes less compute on padded slices.

@@ -78,11 +78,21 @@ class Config:
     epochs: int = 50                          # paper grid: {25, 40, 50, 100}
     warmup_epochs: int = 2
     use_class_weights: bool = True            # paper used a weighted class function for imbalance
-    loss: str = "weighted_ce"                 # weighted_ce | focal
+    loss: str = "weighted_ce"                 # weighted_ce | focal | cost_sensitive
     focal_gamma: float = 2.0
+    # cost_sensitive: asymmetric costs for under-calling pathology to 'normal'.
+    cost_miss_abnormal: float = 5.0           # cost of true abnormal -> predicted normal (worst)
+    cost_miss_near_normal: float = 3.0        # cost of true near_normal -> predicted normal
+    cost_ce_lambda: float = 0.3               # blend weight for a CE term (stability)
     label_smoothing: float = 0.05             # softens the noisy normal/near_normal boundary
     grad_clip: float = 1.0
-    early_stop_patience: int = 10             # epochs w/o val-F1 improvement
+    # checkpoint / early-stop selection metric (higher = better). For AI-radiology
+    # "don't miss pathology", balanced_acc (mean per-class recall) is preferred over
+    # f1: it rewards recall on near_normal/abnormal and can't be gamed by over-calling.
+    # options: balanced_acc | f1 | not_normal_sensitivity | accuracy | auc
+    monitor: str = "balanced_acc"
+    target_sensitivity: float = 0.95          # not-normal sensitivity floor for the test operating point
+    early_stop_patience: int = 10             # epochs w/o monitor improvement
     num_workers: int = 4                      # run is compute-bound (grad_ckpt recompute); workers don't change ~12s/it, so 4 = max RAM safety
     seed: int = 42
     # length-bucketed batching: group studies of similar bag size into the same batch
@@ -109,9 +119,12 @@ class Config:
     xai_every_n_epochs: int = 5               # log Grad-CAM++ overlays to TensorBoard this often
     xai_num_studies: int = 4                  # studies to visualize each time
 
-    # ----- io -----
+    # ----- io / resume -----
     out_dir: str = "./runs/maxvit_mil"
     log_histograms: bool = True
+    # resume full training state (model+optimizer+scheduler+scaler+counters+RNG) from
+    # a checkpoint written by the trainer (best.pt / last.pt). "" = start fresh.
+    resume: str = ""
 
     def to_dict(self):
         return asdict(self)

@@ -107,22 +107,29 @@ This writes `splits/{train,val,test}.csv`, which are the defaults in `config.py`
 ## Train
 `config.py` defaults already encode the full recipe — split CSVs, MaxViT-384 @
 384×384, ≤96 slices/study, batch 16, `slice_chunk=96`, `grad_checkpoint=True`,
-length bucketing, `weighted_ce` + `label_smoothing=0.05`, `window_jitter=0.05`
-(ColorJitter off). Final run command:
+length bucketing, `label_smoothing=0.05`, `window_jitter=0.05` (ColorJitter off),
+checkpoint selection on **`balanced_acc`**, and a 0.95-sensitivity test operating
+point. Final (clinical) run command:
 ```bash
 python train_main.py \
-  --out_dir runs/maxvit384_3class \
+  --out_dir runs/maxvit384_3class_clinical \
+  --loss cost_sensitive \
+  --monitor balanced_acc \
+  --target_sensitivity 0.95 \
   --xai_enabled true --log_histograms true --use_amp true
 ```
-Run it detached (≈30 min/epoch, up to 50 epochs with early stopping):
+Run it detached (≈2.3 h/epoch on the full set, up to 50 epochs with early stopping):
 ```bash
 nohup python train_main.py \
-  --out_dir runs/maxvit384_3class \
+  --out_dir runs/maxvit384_3class_clinical \
+  --loss cost_sensitive --monitor balanced_acc --target_sensitivity 0.95 \
   --xai_enabled true --log_histograms true --use_amp true \
-  > runs/maxvit384_3class.log 2>&1 &
+  > runs/maxvit384_3class_clinical.log 2>&1 &
 ```
-Any `config.py` field is a CLI flag, e.g. swap `--backbone vit|tnt|convnext` for
-the paper's comparison models, or override the recipe knobs directly.
+Conservative alternative: drop `--loss cost_sensitive` to use the default
+`weighted_ce`. Any `config.py` field is a CLI flag — swap
+`--backbone vit|tnt|convnext` for the paper's comparison models, or override
+recipe knobs directly.
 
 > **Memory note.** Full fine-tune at batch 16 × 96 slices × 384px **requires
 > `grad_checkpoint=True`** (default) — without it, the ~1536 slice activations
@@ -135,11 +142,48 @@ the paper's comparison models, or override the recipe knobs directly.
 ```bash
 tensorboard --logdir runs
 ```
-Logged: scalars (train/val loss, accuracy, macro precision/recall/F1, AUC, lr),
-images (confusion matrix, **Grad-CAM++ overlays** on top-attended slices,
-per-study **attention** bar charts), weight/grad histograms, and an HPARAMS entry
-with best val-F1 vs the full config. (The ROC curve is logged for the binary case
-only; for 3-class, rely on macro-OVR AUC + the confusion matrix.)
+Logged scalars: train/val loss, accuracy, macro precision/recall/F1, **balanced
+accuracy**, **per-class recall** (`recall_normal/near_normal/abnormal`),
+**`not_normal_sensitivity`**, **`normal_specificity`**, macro-OVR AUC, lr; plus at
+test the **operating-point** sens/spec (see below). Images: confusion matrix,
+**Grad-CAM++ overlays** on top-attended slices, per-study **attention** bar charts;
+weight/grad histograms; and an HPARAMS entry with the best monitor value. (ROC
+curve is logged for the binary case only; for 3-class use macro-OVR AUC + the
+confusion matrix.)
+
+## Metrics, loss & checkpoint selection (clinical)
+Built for the AI-radiology priority: **don't miss `near_normal` / `abnormal`**.
+
+**Checkpoint / early-stop metric** — `--monitor` (higher = better; default
+`balanced_acc`). Options: `balanced_acc | f1 | not_normal_sensitivity | accuracy
+| auc`. `balanced_acc` (mean per-class recall) is the recommended selector: it
+rewards recall on every class and **can't be gamed by over-calling** (over-calling
+tanks `normal` recall). Avoid selecting on `not_normal_sensitivity` alone — it's a
+*threshold choice*, not model quality, and a flag-everything model maxes it.
+
+**Operating point (test only, no leakage)** — argmax uses a symmetric threshold;
+instead we score pathology as `s = 1 − P(normal)`, pick the threshold on **val**
+that maximizes specificity subject to `not_normal_sensitivity ≥ --target_sensitivity`
+(default 0.95), and report `op_test_sensitivity` / `op_test_specificity` on test.
+This yields a defensible "at 95% pathology sensitivity, here is the false-alarm
+rate" statement.
+
+**Loss** — `--loss`:
+| value | what | when |
+|---|---|---|
+| `weighted_ce` (default) | CE × inverse-frequency class weights + label smoothing | frequency imbalance, symmetric costs |
+| `focal` | `(1−p)^γ·CE` | hard-example focus (risky: amplifies noisy `near_normal`) |
+| `cost_sensitive` | expected cost `E_j[p_j·C[true,j]] + λ·CE` | **asymmetric clinical cost** |
+
+`cost_sensitive` uses a cost matrix `C[true,pred]` that makes **under-calling
+pathology to `normal` expensive** — `abnormal→normal = --cost_miss_abnormal` (5),
+`near_normal→normal = --cost_miss_near_normal` (3), generic errors = 1, diagonal =
+0 — plus a `--cost_ce_lambda` (0.3) CE term for stability. It trains the model to
+keep probability mass off `normal` for pathological cases.
+
+Division of labour: **monitor** picks the best-discriminating model, the
+**cost loss** trains the right error profile, and the **operating point** sets the
+decision threshold to the sensitivity you require.
 
 ## Explain a single study
 ```bash
@@ -158,9 +202,10 @@ attended slices.
   slice of every study: `all_slices=True, batch_size=1, slice_chunk>0,
   grad_checkpoint=True`. `length_bucketing` groups similar-length studies into a
   batch so the backbone wastes less compute on padding.
-- **Class imbalance.** `use_class_weights=True` (default) applies inverse-
-  frequency weights via `weighted_ce`; `loss=focal` is also available. Watch the
-  per-class recall of the minority `normal` class, and remember `normal` ↔
-  `near_normal` is the genuinely hard, label-noisy boundary.
+- **Class imbalance & clinical cost.** `use_class_weights=True` (default) applies
+  inverse-frequency weights to the loss. For asymmetric "don't miss pathology"
+  cost use `--loss cost_sensitive` (see *Metrics, loss & checkpoint selection*);
+  `--loss focal` is also available. Watch `recall_abnormal` / `not_normal_sensitivity`,
+  and remember `normal` ↔ `near_normal` is the genuinely hard, label-noisy boundary.
 - Slice windows are configurable via `cfg.windows` (the three (center, width)
   pairs stacked into the 3 channels).

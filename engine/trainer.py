@@ -21,7 +21,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from .losses import build_loss
-from .metrics import compute_metrics, confusion_figure, roc_figure
+from .metrics import (compute_metrics, confusion_figure, roc_figure,
+                      pathology_operating_point, apply_operating_point)
 from xai.gradcampp import GradCAMpp, denormalize, overlay
 
 
@@ -81,6 +82,68 @@ class Trainer:
         self.best_f1 = -1.0
         self.epochs_no_improve = 0
         self.global_step = 0
+        self.start_epoch = 0
+        # Optionally resume full training state (model+optim+sched+scaler+counters).
+        resume = getattr(cfg, "resume", "")
+        if resume:
+            self._load_ckpt(resume)
+
+    # ---------- checkpoint I/O (full training state) ----------
+    def _save_ckpt(self, path, epoch, val_metrics):
+        """Save COMPLETE state so training can resume bit-for-bit later."""
+        import random
+        ckpt = {
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "scheduler": self.scheduler.state_dict(),
+            "scaler": self.scaler.state_dict(),
+            "epoch": epoch,
+            "best_score": self.best_f1,
+            "epochs_no_improve": self.epochs_no_improve,
+            "global_step": self.global_step,
+            "monitor": getattr(self.cfg, "monitor", "f1"),
+            "cfg": self.cfg.to_dict(),
+            "val_metrics": val_metrics,
+            "rng": {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
+                "torch": torch.get_rng_state(),
+                "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            },
+        }
+        tmp = path + ".tmp"
+        torch.save(ckpt, tmp)
+        os.replace(tmp, path)
+
+    def _load_ckpt(self, path):
+        """Restore full training state from a checkpoint and continue after its epoch."""
+        if not os.path.exists(path):
+            print(f"[resume] checkpoint not found: {path} — starting fresh")
+            return
+        import random
+        ck = torch.load(path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(ck["model"])
+        if "optimizer" in ck:
+            self.optimizer.load_state_dict(ck["optimizer"])
+        if "scheduler" in ck:
+            self.scheduler.load_state_dict(ck["scheduler"])
+        if ck.get("scaler") is not None:
+            self.scaler.load_state_dict(ck["scaler"])
+        self.best_f1 = ck.get("best_score", ck.get("val_metrics", {}).get("f1", -1.0))
+        self.epochs_no_improve = ck.get("epochs_no_improve", 0)
+        self.global_step = ck.get("global_step", 0)
+        self.start_epoch = int(ck.get("epoch", -1)) + 1
+        rng = ck.get("rng")
+        if rng:
+            try:
+                random.setstate(rng["python"]); np.random.set_state(rng["numpy"])
+                torch.set_rng_state(rng["torch"])
+                if rng.get("cuda") is not None and torch.cuda.is_available():
+                    torch.cuda.set_rng_state_all(rng["cuda"])
+            except Exception as e:
+                print(f"[resume] RNG restore skipped: {e}")
+        print(f"[resume] loaded {path}: continuing from epoch {self.start_epoch} "
+              f"(best {ck.get('monitor','?')}={self.best_f1:.4f})")
 
     # ---------- one epoch ----------
     def _run_epoch(self, loader, train: bool, epoch: int):
@@ -122,7 +185,8 @@ class Trainer:
             all_prob.extend(torch.softmax(logits.float(), 1).detach().cpu().tolist())
             pbar.set_postfix(loss=f"{np.mean(losses):.4f}")
 
-        metrics = compute_metrics(all_true, all_prob, self.cfg.num_classes)
+        metrics = compute_metrics(all_true, all_prob, self.cfg.num_classes,
+                                  class_names=self.cfg.class_names)
         metrics["loss"] = float(np.mean(losses))
         for k, v in metrics.items():
             self.writer.add_scalar(f"{phase}/{k}", v, epoch)
@@ -170,7 +234,7 @@ class Trainer:
 
     # ---------- main loop ----------
     def fit(self):
-        for epoch in range(self.cfg.epochs):
+        for epoch in range(self.start_epoch, self.cfg.epochs):
             # reshuffle length-bucketed batches each epoch (no-op for a plain sampler)
             bs = getattr(self.train_loader, "batch_sampler", None)
             if hasattr(bs, "set_epoch"):
@@ -191,29 +255,49 @@ class Trainer:
                     epoch % self.cfg.xai_every_n_epochs == 0 or epoch == self.cfg.epochs - 1):
                 self._log_xai(epoch)
 
-            print(f"epoch {epoch}: val_f1={val_metrics['f1']:.4f} "
-                  f"acc={val_metrics['accuracy']:.4f} auc={val_metrics['auc']:.4f}")
+            monitor = getattr(self.cfg, "monitor", "f1")
+            score = val_metrics.get(monitor, val_metrics["f1"])
+            print(f"epoch {epoch}: val[{monitor}]={score:.4f}  f1={val_metrics['f1']:.4f} "
+                  f"bal_acc={val_metrics.get('balanced_acc', float('nan')):.4f} "
+                  f"not_normal_sens={val_metrics.get('not_normal_sensitivity', float('nan')):.4f} "
+                  f"auc={val_metrics['auc']:.4f}")
 
-            # checkpoint + early stop on val F1
-            if val_metrics["f1"] > self.best_f1:
-                self.best_f1 = val_metrics["f1"]
+            # checkpoint + early stop on the configured monitor metric (higher = better)
+            improved = score > self.best_f1
+            if improved:
+                self.best_f1 = score
                 self.epochs_no_improve = 0
-                torch.save({"model": self.model.state_dict(),
-                            "cfg": self.cfg.to_dict(),
-                            "epoch": epoch, "val_metrics": val_metrics},
-                           os.path.join(self.cfg.out_dir, "best.pt"))
             else:
                 self.epochs_no_improve += 1
-                if self.epochs_no_improve >= self.cfg.early_stop_patience:
-                    print(f"Early stopping at epoch {epoch}")
-                    break
+            # always save full state as last.pt (exact resume); best.pt on improvement
+            self._save_ckpt(os.path.join(self.cfg.out_dir, "last.pt"), epoch, val_metrics)
+            if improved:
+                self._save_ckpt(os.path.join(self.cfg.out_dir, "best.pt"), epoch, val_metrics)
+            if not improved and self.epochs_no_improve >= self.cfg.early_stop_patience:
+                print(f"Early stopping at epoch {epoch}")
+                break
 
         self.writer.add_hparams(
             {k: v for k, v in self.cfg.to_dict().items() if isinstance(v, (int, float, str, bool))},
-            {"hparam/best_val_f1": self.best_f1},
+            {f"hparam/best_val_{getattr(self.cfg, 'monitor', 'f1')}": self.best_f1},
         )
         self.writer.close()
         return self.best_f1
+
+    @torch.no_grad()
+    def _collect_probs(self, loader):
+        """Run a loader through the model -> (y_true, y_prob) arrays."""
+        self.model.eval()
+        ys, ps = [], []
+        for batch in loader:
+            bag = batch["bag"].to(self.device)
+            mask = batch["mask"].to(self.device)
+            with torch.autocast(device_type="cuda" if self.use_amp else "cpu",
+                                dtype=torch.float16, enabled=self.use_amp):
+                logits = self.model(bag, mask)
+            ys.extend(batch["label"].tolist())
+            ps.extend(torch.softmax(logits.float(), 1).cpu().tolist())
+        return np.array(ys), np.array(ps)
 
     # ---------- held-out test ----------
     @torch.no_grad()
@@ -223,17 +307,27 @@ class Trainer:
         if os.path.exists(path):
             state = torch.load(path, map_location=self.device, weights_only=False)
             self.model.load_state_dict(state["model"])
-        self.model.eval()
-        all_true, all_prob = [], []
-        for batch in loader:
-            bag = batch["bag"].to(self.device)
-            mask = batch["mask"].to(self.device)
-            with torch.autocast(device_type="cuda" if self.use_amp else "cpu",
-                                dtype=torch.float16, enabled=self.use_amp):
-                logits = self.model(bag, mask)
-            all_true.extend(batch["label"].tolist())
-            all_prob.extend(torch.softmax(logits.float(), 1).cpu().tolist())
-        metrics = compute_metrics(all_true, all_prob, self.cfg.num_classes)
+        all_true, all_prob = self._collect_probs(loader)
+        metrics = compute_metrics(all_true, all_prob, self.cfg.num_classes,
+                                  class_names=self.cfg.class_names)
+
+        # Clinical operating point: choose the pathology-flag threshold on VAL to hit
+        # the target not-normal sensitivity, then report sens/spec on TEST at that
+        # threshold (no test leakage). Only meaningful for the 3-class screening view.
+        if self.cfg.num_classes >= 3 and self.val_loader is not None:
+            v_true, v_prob = self._collect_probs(self.val_loader)
+            op = pathology_operating_point(v_true, v_prob,
+                                           target_sensitivity=getattr(self.cfg, "target_sensitivity", 0.95))
+            test_op = apply_operating_point(all_true, all_prob, op["threshold"])
+            metrics["op_threshold"] = op["threshold"]
+            metrics["op_val_sensitivity"] = op["sensitivity"]
+            metrics["op_val_specificity"] = op["specificity"]
+            metrics["op_test_sensitivity"] = test_op["op_sensitivity"]
+            metrics["op_test_specificity"] = test_op["op_specificity"]
+            print(f"[operating point @target_sens={op['target']:.2f}] "
+                  f"thr={op['threshold']:.3f} | val sens/spec={op['sensitivity']:.3f}/{op['specificity']:.3f} "
+                  f"| TEST sens/spec={test_op['op_sensitivity']:.3f}/{test_op['op_specificity']:.3f}")
+
         w = SummaryWriter(self.cfg.out_dir)                       # writer was closed after fit()
         for k, v in metrics.items():
             w.add_scalar(f"test/{k}", v, 0)

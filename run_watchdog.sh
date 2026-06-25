@@ -7,7 +7,7 @@ set -u
 
 CD=/root/ritikkumar/ct_brain_classifier
 PY=/root/ritikkumar/ct_brain/bin/python
-OUT=$CD/runs/maxvit384_3class
+OUT=$CD/runs/maxvit384_3class_clinical
 TRAIN_LOG=$OUT.log
 WLOG=$OUT.watchdog.log
 PIDFILE=$OUT.watchdog.pid
@@ -34,6 +34,7 @@ while :; do
   log "launch attempt $attempt -> $TRAIN_LOG"
   "$PY" train_main.py \
       --out_dir "$OUT" \
+      --loss cost_sensitive --monitor balanced_acc --target_sensitivity 0.95 \
       --xai_enabled true --log_histograms true --use_amp true \
       >> "$TRAIN_LOG" 2>&1
   code=$?

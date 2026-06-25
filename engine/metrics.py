@@ -15,8 +15,14 @@ from sklearn.metrics import (
 )
 
 
-def compute_metrics(y_true, y_prob, num_classes=2):
-    """y_true: (N,), y_prob: (N, C) softmax probs."""
+def compute_metrics(y_true, y_prob, num_classes=2, class_names=None, normal_index=0):
+    """y_true: (N,), y_prob: (N, C) softmax probs.
+
+    Reports balanced (macro) metrics plus, for a clinical "don't miss pathology"
+    view, per-class recall (= per-class sensitivity), balanced accuracy, and the
+    normal-vs-not-normal framing: not_normal_sensitivity (caught pathology) and
+    normal_specificity. `normal_index` is the class treated as 'normal' (0).
+    """
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
     y_pred = y_prob.argmax(1)
@@ -25,13 +31,29 @@ def compute_metrics(y_true, y_prob, num_classes=2):
         y_true, y_pred, average="macro", zero_division=0
     )
     out = {"accuracy": acc, "precision": p, "recall": r, "f1": f1}
+
+    # per-class recall (= sensitivity per class) + balanced accuracy
+    labels = list(range(num_classes))
+    _, rec_pc, _, _ = precision_recall_fscore_support(
+        y_true, y_pred, labels=labels, average=None, zero_division=0
+    )
+    out["balanced_acc"] = float(np.mean(rec_pc))
+    names = (list(class_names) if class_names and len(class_names) == num_classes
+             else [str(i) for i in labels])
+    for i, nm in enumerate(names):
+        out[f"recall_{nm}"] = float(rec_pc[i])
+
     if num_classes == 2:
-        # per-class recall (positive = abnormal = class 1)
-        _, rec_pc, _, _ = precision_recall_fscore_support(
-            y_true, y_pred, labels=[0, 1], average=None, zero_division=0
-        )
-        out["specificity"] = rec_pc[0]   # normal recall   = TN / (TN + FP)
-        out["sensitivity"] = rec_pc[1]   # abnormal recall = TP / (TP + FN)
+        out["specificity"] = float(rec_pc[0])   # normal recall
+        out["sensitivity"] = float(rec_pc[1])   # abnormal recall
+    elif num_classes >= 3:
+        # normal vs not-normal (the clinical screening gate, under argmax)
+        is_normal = y_true == normal_index
+        n_norm = max(int(is_normal.sum()), 1)
+        n_path = max(int((~is_normal).sum()), 1)
+        out["normal_specificity"] = float(((y_pred == normal_index) & is_normal).sum() / n_norm)
+        out["not_normal_sensitivity"] = float(((y_pred != normal_index) & ~is_normal).sum() / n_path)
+
     try:
         if num_classes == 2:
             out["auc"] = roc_auc_score(y_true, y_prob[:, 1])
@@ -40,6 +62,47 @@ def compute_metrics(y_true, y_prob, num_classes=2):
     except ValueError:
         out["auc"] = float("nan")           # only one class present in this split
     return out
+
+
+def pathology_operating_point(y_true, y_prob, target_sensitivity=0.95, normal_index=0):
+    """Pick a threshold on the pathology score s = 1 - P(normal) that MAXIMIZES
+    specificity subject to (normal-vs-not-normal) sensitivity >= target.
+
+    Choosing the threshold on a held-out split (val) and applying it to another
+    (test) avoids argmax's symmetric bias when the priority is not missing
+    near_normal / abnormal. Returns {threshold, sensitivity, specificity, target}.
+    """
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    s = 1.0 - y_prob[:, normal_index]
+    true_path = (y_true != normal_index).astype(int)
+    if true_path.sum() in (0, len(true_path)):
+        return {"threshold": float("nan"), "sensitivity": float("nan"),
+                "specificity": float("nan"), "target": float(target_sensitivity)}
+    fpr, tpr, thr = roc_curve(true_path, s)
+    ok = tpr >= target_sensitivity
+    if ok.any():                       # among points meeting the floor, minimize FPR (max specificity)
+        cand = np.where(ok)[0]
+        idx = int(cand[np.argmin(fpr[cand])])
+    else:                              # floor unreachable -> take highest achievable sensitivity
+        idx = int(np.argmax(tpr))
+    return {"threshold": float(thr[idx]), "sensitivity": float(tpr[idx]),
+            "specificity": float(1.0 - fpr[idx]), "target": float(target_sensitivity)}
+
+
+def apply_operating_point(y_true, y_prob, threshold, normal_index=0):
+    """Sensitivity/specificity (normal vs not-normal) on a split at a fixed threshold."""
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    s = 1.0 - y_prob[:, normal_index]
+    flag = s >= threshold
+    is_normal = y_true == normal_index
+    n_norm = max(int(is_normal.sum()), 1)
+    n_path = max(int((~is_normal).sum()), 1)
+    return {
+        "op_sensitivity": float((flag & ~is_normal).sum() / n_path),
+        "op_specificity": float((~flag & is_normal).sum() / n_norm),
+    }
 
 
 def _fig_to_array(fig):

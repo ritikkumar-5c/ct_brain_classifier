@@ -116,7 +116,12 @@ def index_studies_from_csv(csv_path: str, class_names=("normal", "abnormal")):
     items = []
     for _, row in df.iterrows():
         sdir = str(row["path"]).rstrip("/")
-        sid = os.path.basename(sdir)
+        # study_id must let _study_of() recover the patient/study so splits stay
+        # patient-disjoint. Flat layout '<studyID>_<seriesID>' already encodes it
+        # in the basename; nested layout '<studyID>/<seriesID>' carries it in the
+        # parent dir, so fold it in as '<studyID>_<seriesID>'.
+        base = os.path.basename(sdir)
+        sid = base if "_" in base else f"{os.path.basename(os.path.dirname(sdir))}_{base}"
         label = _to_label(row["label"], label_map)
         slices = _find_slices(sdir)
         if slices:

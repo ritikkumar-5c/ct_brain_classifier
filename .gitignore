@@ -1,0 +1,46 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.ipynb_checkpoints/
+
+# ---- Logs ----
+*.log
+log/
+
+# ---- TensorBoard events ----
+runs/
+events.out.tfevents.*
+*.tfevents.*
+
+# ---- Model checkpoints / weights ----
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# ---- Data / large artifacts ----
+# NOTE: data/ here is SOURCE CODE (dataset/transform modules) and is tracked.
+# Raw DICOM/image data lives outside this repo.
+*.dcm
+*.npy
+*.npz
+
+# ---- XAI / output artifacts ----
+*.png
+*.jpg
+*.jpeg
+
+# ---- Env / secrets ----
+*.env
+.env
+*.key
+*credentials*
+
+# ---- OS / editor ----
+.DS_Store
+.vscode/
+.idea/

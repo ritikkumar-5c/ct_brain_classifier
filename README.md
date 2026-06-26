@@ -142,48 +142,25 @@ recipe knobs directly.
 ```bash
 tensorboard --logdir runs
 ```
-Logged scalars: train/val loss, accuracy, macro precision/recall/F1, **balanced
-accuracy**, **per-class recall** (`recall_normal/near_normal/abnormal`),
-**`not_normal_sensitivity`**, **`normal_specificity`**, macro-OVR AUC, lr; plus at
-test the **operating-point** sens/spec (see below). Images: confusion matrix,
-**Grad-CAM++ overlays** on top-attended slices, per-study **attention** bar charts;
-weight/grad histograms; and an HPARAMS entry with the best monitor value. (ROC
-curve is logged for the binary case only; for 3-class use macro-OVR AUC + the
-confusion matrix.)
+Logged: loss, accuracy, macro P/R/F1, balanced accuracy, per-class recall,
+`not_normal_sensitivity`, `normal_specificity`, macro-OVR AUC, lr; confusion
+matrix, Grad-CAM++ overlays, per-study attention; and the test operating-point
+sens/spec. (Metric definitions: [`docs/metrics_losses_and_selection.md`](docs/metrics_losses_and_selection.md).)
 
-## Metrics, loss & checkpoint selection (clinical)
-Built for the AI-radiology priority: **don't miss `near_normal` / `abnormal`**.
+## Metrics, loss & decision logic (clinical)
+Built for "don't miss `near_normal` / `abnormal`". Three separate levers:
 
-**Checkpoint / early-stop metric** — `--monitor` (higher = better; default
-`balanced_acc`). Options: `balanced_acc | f1 | not_normal_sensitivity | accuracy
-| auc`. `balanced_acc` (mean per-class recall) is the recommended selector: it
-rewards recall on every class and **can't be gamed by over-calling** (over-calling
-tanks `normal` recall). Avoid selecting on `not_normal_sensitivity` alone — it's a
-*threshold choice*, not model quality, and a flag-everything model maxes it.
+- **Loss** (`--loss`, current run: **`cost_sensitive`**) — penalizes under-calling
+  pathology to `normal` (cost matrix: `abnormal→normal=5`, `near_normal→normal=3`).
+  Also `weighted_ce` (default) and `focal`.
+- **Checkpoint/early-stop metric** (`--monitor`, default **`balanced_acc`**) — picks
+  the best-discriminating model; not gameable by over-calling.
+- **Operating point** (test, `--target_sensitivity` default **0.95**) — tunes the
+  decision threshold on val to a sensitivity floor, reported as `op_test_*`.
 
-**Operating point (test only, no leakage)** — argmax uses a symmetric threshold;
-instead we score pathology as `s = 1 − P(normal)`, pick the threshold on **val**
-that maximizes specificity subject to `not_normal_sensitivity ≥ --target_sensitivity`
-(default 0.95), and report `op_test_sensitivity` / `op_test_specificity` on test.
-This yields a defensible "at 95% pathology sensitivity, here is the false-alarm
-rate" statement.
-
-**Loss** — `--loss`:
-| value | what | when |
-|---|---|---|
-| `weighted_ce` (default) | CE × inverse-frequency class weights + label smoothing | frequency imbalance, symmetric costs |
-| `focal` | `(1−p)^γ·CE` | hard-example focus (risky: amplifies noisy `near_normal`) |
-| `cost_sensitive` | expected cost `E_j[p_j·C[true,j]] + λ·CE` | **asymmetric clinical cost** |
-
-`cost_sensitive` uses a cost matrix `C[true,pred]` that makes **under-calling
-pathology to `normal` expensive** — `abnormal→normal = --cost_miss_abnormal` (5),
-`near_normal→normal = --cost_miss_near_normal` (3), generic errors = 1, diagonal =
-0 — plus a `--cost_ce_lambda` (0.3) CE term for stability. It trains the model to
-keep probability mass off `normal` for pathological cases.
-
-Division of labour: **monitor** picks the best-discriminating model, the
-**cost loss** trains the right error profile, and the **operating point** sets the
-decision threshold to the sensitivity you require.
+Full detail (formulas, cost matrix, monitor options, per-epoch progress reads) is in
+[`docs/metrics_losses_and_selection.md`](docs/metrics_losses_and_selection.md) and
+the `docs/training_progress_analysis_epoch*.md` reports.
 
 ## Explain a single study
 ```bash

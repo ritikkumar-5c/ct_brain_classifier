@@ -35,6 +35,7 @@ while :; do
   "$PY" train_main.py \
       --out_dir "$OUT" \
       --loss cost_sensitive --monitor balanced_acc --target_sensitivity 0.95 \
+      --resume "$OUT/last.pt" \
       --xai_enabled true --log_histograms true --use_amp true \
       >> "$TRAIN_LOG" 2>&1
   code=$?

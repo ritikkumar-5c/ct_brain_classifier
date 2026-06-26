@@ -137,9 +137,9 @@ class Trainer:
         if rng:
             try:
                 random.setstate(rng["python"]); np.random.set_state(rng["numpy"])
-                torch.set_rng_state(rng["torch"])
+                torch.set_rng_state(rng["torch"].cpu().to(torch.uint8))   # must be CPU ByteTensor
                 if rng.get("cuda") is not None and torch.cuda.is_available():
-                    torch.cuda.set_rng_state_all(rng["cuda"])
+                    torch.cuda.set_rng_state_all([s.cpu().to(torch.uint8) for s in rng["cuda"]])
             except Exception as e:
                 print(f"[resume] RNG restore skipped: {e}")
         print(f"[resume] loaded {path}: continuing from epoch {self.start_epoch} "

@@ -27,7 +27,37 @@ trap 'rm -f "$PIDFILE"' EXIT
 
 log() { echo "[watchdog $(date '+%F %T')] $*" >> "$WLOG"; }
 
+# Return the MAIN (non-worker) train_main pid for this out_dir, if any.
+# DataLoader workers are forked children of main and share its argv, so the
+# main process is the matching pid whose parent is NOT itself a match.
+find_train_pid() {
+  local pids p ppid
+  pids=$(ps -eo pid,args | awk -v od="$OUT" '/ct_brain\/bin\/python train_main/ && !/awk/ && $0 ~ od {print $1}')
+  for p in $pids; do
+    ppid=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    if ! echo "$pids" | tr ' ' '\n' | grep -qw "$ppid"; then echo "$p"; return 0; fi
+  done
+  return 1
+}
+
 log "start (pid=$$), out_dir=$OUT, max_retries=$MAX_RETRIES"
+
+# Adopt phase: if a training is already running (e.g. the watchdog was killed
+# but train_main survived as an orphan), DO NOT launch a duplicate on the same
+# out_dir. Wait for it to exit, then decide: clean finish (test eval logged)
+# => done; otherwise treat as a crash and fall through to the resume loop.
+existing=$(find_train_pid || true)
+if [ -n "${existing:-}" ]; then
+  log "adopting already-running training pid=$existing; waiting (no duplicate launch)"
+  while kill -0 "$existing" 2>/dev/null; do sleep 30; done
+  log "adopted training pid=$existing exited"
+  if tail -n 60 "$TRAIN_LOG" | grep -q "TEST (best ckpt):"; then
+    log "clean completion marker found — training complete. stopping watchdog."
+    exit 0
+  fi
+  log "no completion marker — treating as crash; will resume from last.pt"
+fi
+
 attempt=0
 while :; do
   attempt=$((attempt + 1))

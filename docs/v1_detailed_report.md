@@ -76,7 +76,7 @@ Low normal recall (0.507) on test — the cost-matrix bias against the normal cl
 
 ## 5. Screening operating points — normal vs not-normal (threshold on VAL → applied to TEST)
 
-| target sens | threshold | TEST sensitivity | specificity | precision | FAR (1−spec) | TP / FP / FN / TN |
+| target sens | threshold | Not-Normal Sensitivity | Not-Normal Specificity | Not-Normal Precision | Not-Normal FAR (1−spec) | TP / FP / FN / TN |
 |--:|--:|--:|--:|--:|--:|--|
 | 0.95 | 0.284 | 0.949 | 0.425 | 0.863 | 0.575 | 1972 / 314 / 105 / 232 |
 | 0.96 | 0.175 | 0.958 | 0.368 | 0.852 | 0.632 | 1989 / 345 / 88 / 201 |

@@ -80,7 +80,7 @@ Per-class recall more balanced than v1 (eased cost matrix), but overall discrimi
 
 ## 5. Screening operating points — normal vs not-normal (threshold on VAL → applied to TEST)
 
-| target sens | threshold | TEST sensitivity | specificity | precision | FAR (1−spec) | TP / FP / FN / TN |
+| target sens | threshold | Not-Normal Sensitivity | Not-Normal Specificity | Not-Normal Precision | Not-Normal FAR (1−spec) | TP / FP / FN / TN |
 |--:|--:|--:|--:|--:|--:|--|
 | 0.95 | 0.209 | 0.945 | 0.368 | 0.850 | 0.632 | 1962 / 345 / 115 / 201 |
 | 0.96 | 0.177 | 0.952 | 0.326 | 0.843 | 0.674 | 1978 / 368 / 99 / 178 |

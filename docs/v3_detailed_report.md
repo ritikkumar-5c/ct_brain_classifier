@@ -92,7 +92,7 @@ Per-class recall is balanced (no class sacrificed); val→test generalization is
 
 Score = `1 − P(normal)`; threshold maximizes specificity subject to the sensitivity floor. Units = 2,623 test series.
 
-| target sens | threshold | not-normal sensitivity | specificity | precision | false-alarm rate (1−spec) | TP / FP / FN / TN |
+| target sens | threshold | Not-Normal Sensitivity | Not-Normal Specificity | Not-Normal Precision | Not-Normal FAR (1−spec) | TP / FP / FN / TN |
 |--:|--:|--:|--:|--:|--:|--|
 | 0.95 | 0.179 | 0.941 | 0.452 | 0.867 | 0.548 | 1955 / 299 / 122 / 247 |
 | 0.96 | 0.128 | 0.951 | 0.399 | 0.858 | 0.601 | 1976 / 328 / 101 / 218 |
@@ -124,7 +124,7 @@ The test set is **2,623 series from 1,583 patients** (926 patients have ≥2 ser
 **Patient-level is slightly better, and `mean` wins** — aggregation averages out per-series noise (a mini-ensemble), so the per-series numbers were *not* inflated by correlated samples. `max` shifts toward pathology (normal recall 0.699→0.631), so `mean` is the better aggregator. **Recommendation: deploy with per-patient mean aggregation.**
 
 ### Screening operating points — PATIENT-level [mean] (threshold on VAL → TEST; 1,583 patients)
-| target sens | threshold | sensitivity | specificity | precision | FAR (1−spec) | TP / FP / FN / TN |
+| target sens | threshold | Not-Normal Sensitivity | Not-Normal Specificity | Not-Normal Precision | Not-Normal FAR (1−spec) | TP / FP / FN / TN |
 |--:|--:|--:|--:|--:|--:|--|
 | 0.95 | 0.208 | 0.945 | 0.488 | 0.873 | 0.512 | 1178 / 172 / 69 / 164 |
 | 0.96 | 0.152 | 0.953 | 0.420 | 0.859 | 0.580 | 1188 / 195 / 59 / 141 |
@@ -133,7 +133,7 @@ The test set is **2,623 series from 1,583 patients** (926 patients have ≥2 ser
 | 0.99 | 0.038 | 0.986 | 0.196 | 0.820 | 0.804 | 1230 / 270 / 17 / 66 |
 
 ### Screening operating points — PATIENT-level [max] (threshold on VAL → TEST; 1,583 patients)
-| target sens | threshold | sensitivity | specificity | precision | FAR (1−spec) | TP / FP / FN / TN |
+| target sens | threshold | Not-Normal Sensitivity | Not-Normal Specificity | Not-Normal Precision | Not-Normal FAR (1−spec) | TP / FP / FN / TN |
 |--:|--:|--:|--:|--:|--:|--|
 | 0.95 | 0.235 | 0.947 | 0.458 | 0.866 | 0.542 | 1181 / 182 / 66 / 154 |
 | 0.96 | 0.175 | 0.957 | 0.414 | 0.858 | 0.586 | 1194 / 197 / 53 / 139 |

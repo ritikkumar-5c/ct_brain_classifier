@@ -103,14 +103,16 @@ Each threshold trades **miss rate** (safety) against **% of normals automated** 
 
 Denominators: not-normal patients (Pos) = **1,247**; normal patients (Neg) = **336**.
 
-| target sens | threshold | Not-Normal Sensitivity (TP/Pos) | % NORMAL auto-cleared = specificity (TN/Neg) | Missed pathology (FN/Pos, miss rate) | TP / FP / FN / TN |
-|--:|--:|--:|--:|--:|--|
-| 0.95 | 0.208 | 94.5% (1,178/1,247) | 48.8% (164/336) | 69/1,247 (5.5%) | 1178 / 172 / 69 / 164 |
-| 0.98 | 0.066 | 97.8% (1,219/1,247) | 28.9% (97/336) | 28/1,247 (2.3%) | 1219 / 239 / 28 / 97 |
-| 0.99 | 0.038 | 98.6% (1,230/1,247) | 19.6% (66/336) | 17/1,247 (1.4%) | 1230 / 270 / 17 / 66 |
-| 0.995 | 0.023 | 99.5% (1,241/1,247) | **10.1% (34/336)** | **6/1,247 (0.48%)** | 1241 / 302 / 6 / 34 |
-| 0.999 | 0.018 | 99.6% (1,242/1,247) | 7.1% (24/336) | 5/1,247 (0.40%) | 1242 / 312 / 5 / 24 |
-| 1.000 (test) | 0.016 | 99.8% (1,244/1,247) | 5.7% (19/336) | 3/1,247 (0.24%) | 1244 / 317 / 3 / 19 |
+| target sens | threshold | Not-Normal Sensitivity (TP/Pos) | % NORMAL auto-cleared = specificity (TN/Neg) | Missed pathology (FN/Pos, miss rate) | NPV (auto-clear safety) | TP / FP / FN / TN |
+|--:|--:|--:|--:|--:|--:|--|
+| 0.95 | 0.208 | 94.5% (1,178/1,247) | 48.8% (164/336) | 69/1,247 (5.5%) | 70.4% | 1178 / 172 / 69 / 164 |
+| 0.98 | 0.066 | 97.8% (1,219/1,247) | 28.9% (97/336) | 28/1,247 (2.3%) | 77.6% | 1219 / 239 / 28 / 97 |
+| 0.99 | 0.038 | 98.6% (1,230/1,247) | 19.6% (66/336) | 17/1,247 (1.4%) | 79.5% | 1230 / 270 / 17 / 66 |
+| 0.995 | 0.023 | 99.5% (1,241/1,247) | **10.1% (34/336)** | **6/1,247 (0.48%)** | **85.0%** | 1241 / 302 / 6 / 34 |
+| 0.999 | 0.018 | 99.6% (1,242/1,247) | 7.1% (24/336) | 5/1,247 (0.40%) | 82.8% | 1242 / 312 / 5 / 24 |
+| 1.000 (test) | 0.016 | 99.8% (1,244/1,247) | 5.7% (19/336) | 3/1,247 (0.24%) | 86.4% | 1244 / 317 / 3 / 19 |
+
+*NPV (auto-clear safety) = TN/(TN+FN) = of all auto-cleared studies, the % truly normal. Values are on the **enriched 21%-normal test set** — they rise substantially at a realistic normal-heavy prevalence (see §4).*
 
 *TP/FP/FN/TN in this auto-rule-out context: **TP** = not-normal correctly sent to doctor; **FP** = normal sent to doctor (safe, just not automated); **FN** = not-normal auto-cleared = **missed pathology (dangerous)**; **TN** = normal correctly auto-cleared (the automation win). Pos=1,247 not-normal, Neg=336 normal patients.*
 
@@ -120,15 +122,15 @@ Denominators: not-normal patients (Pos) = **1,247**; normal patients (Neg) = **3
 
 ## 4. The prevalence effect — workload saved & rule-out safety (NPV)
 
-**% of normals automated (specificity) is a fixed model property**, but the **total workload saved** and the **rule-out safety (NPV = of auto-cleared studies, the fraction truly normal)** depend heavily on the **real-world prevalence of normals**. Our test set is *enriched* (only 21% normal), which is NOT a deployment population. Measured at the **0.995-sensitivity / 0.48%-miss** operating point on the held-out test set:
+**% of normals automated (specificity) is a fixed model property**, but the **total workload saved** and the **rule-out safety (NPV = of auto-cleared studies, the fraction truly normal)** depend heavily on the **real-world prevalence of normals**. Our test set is *enriched* (only 21% normal), which is NOT a deployment population. Measured at the **0.98-sensitivity / 2.3%-miss** operating point on the held-out test set:
 
 | deployment population | % normal | **% of ALL studies auto-cleared** | **NPV** (auto-clear safety) | pathology missed (% of all studies) |
 |---|--:|--:|--:|--:|
-| enriched test set | 21% | 2.5% | 84.7% | 0.38% |
+| enriched test set | 21% | 7.9% | 77.6% | 1.8% |
 
 **Two critical takeaways:**
-1. **Validate at the true prevalence.** On the enriched test set the auto-clear NPV is only **0.85** (≈15% of auto-cleared are actually pathology — unacceptable). NPV is strongly prevalence-dependent: in a genuinely normal-heavy deployment population the *same model* would score markedly higher (confidently-normal predictions are far more likely right when normals dominate). This **must be re-measured on the real production distribution** — the 0.85 here reflects the enriched 21%-normal test set, not a deployment setting.
-2. **Workload saved is small on this distribution:** only **2.5% of all studies** auto-cleared at a safe operating point (normals are just 21% of this enriched set and safe specificity is ~10%). The real figure scales with the production normal rate and must be measured there.
+1. **Validate at the true prevalence.** On the enriched test set the auto-clear NPV is only **77.6%** (≈22% of auto-cleared are actually pathology — unacceptable). NPV is strongly prevalence-dependent: in a genuinely normal-heavy deployment population the *same model* would score markedly higher (confidently-normal predictions are far more likely right when normals dominate). This **must be re-measured on the real production distribution** — the 77.6% here reflects the enriched 21%-normal test set, not a deployment setting.
+2. **Workload saved is small on this distribution:** only **7.9% of all studies** auto-cleared at the 0.98 operating point (normals are just 21% of this enriched set, and at this point ~29% of them are automated). Note the 0.98 point has a **2.3% miss rate** — above the ≤0.5% safety bar used in §3/§5; the real figure scales with the production normal rate and must be measured there.
 
 ---
 

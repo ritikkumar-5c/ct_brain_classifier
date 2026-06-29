@@ -122,9 +122,9 @@ Denominators: not-normal patients (Pos) = **1,247**; normal patients (Neg) = **3
 
 **% of normals automated (specificity) is a fixed model property**, but the **total workload saved** and the **rule-out safety (NPV = of auto-cleared studies, the fraction truly normal)** depend heavily on the **real-world prevalence of normals**. Our test set is *enriched* (only 21% normal), which is NOT a deployment population. Measured at the **0.995-sensitivity / 0.48%-miss** operating point on the held-out test set:
 
-| deployment population | % normal | **% of ALL studies auto-cleared** | **NPV** (auto-clear safety) | pathology missed per 1,000 studies |
+| deployment population | % normal | **% of ALL studies auto-cleared** | **NPV** (auto-clear safety) | pathology missed (% of all studies) |
 |---|--:|--:|--:|--:|
-| enriched test set | 21% | 2.5% | 0.847 | 3.8 |
+| enriched test set | 21% | 2.5% | 84.7% | 0.38% |
 
 **Two critical takeaways:**
 1. **Validate at the true prevalence.** On the enriched test set the auto-clear NPV is only **0.85** (≈15% of auto-cleared are actually pathology — unacceptable). NPV is strongly prevalence-dependent: in a genuinely normal-heavy deployment population the *same model* would score markedly higher (confidently-normal predictions are far more likely right when normals dominate). This **must be re-measured on the real production distribution** — the 0.85 here reflects the enriched 21%-normal test set, not a deployment setting.

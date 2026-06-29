@@ -103,14 +103,14 @@ Each threshold trades **miss rate** (safety) against **% of normals automated** 
 
 Denominators: not-normal patients (Pos) = **1,247**; normal patients (Neg) = **336**.
 
-| target sens | threshold | Not-Normal Sensitivity (TP/Pos) | % NORMAL auto-cleared = specificity (TN/Neg) | Missed pathology (FN/Pos) | **miss rate** |
-|--:|--:|--:|--:|--:|--:|
-| 0.95 | 0.208 | 94.5% (1,178/1,247) | 48.8% (164/336) | 69/1,247 | 5.5% |
-| 0.98 | 0.066 | 97.8% (1,219/1,247) | 28.9% (97/336) | 28/1,247 | 2.3% |
-| 0.99 | 0.038 | 98.6% (1,230/1,247) | 19.6% (66/336) | 17/1,247 | 1.4% |
-| 0.995 | 0.023 | 99.5% (1,241/1,247) | **10.1% (34/336)** | 6/1,247 | **0.48%** |
-| 0.999 | 0.018 | 99.6% (1,242/1,247) | 7.1% (24/336) | 5/1,247 | 0.40% |
-| 1.000 (test) | 0.016 | 99.8% (1,244/1,247) | 5.7% (19/336) | 3/1,247 | 0.24% |
+| target sens | threshold | Not-Normal Sensitivity (TP/Pos) | % NORMAL auto-cleared = specificity (TN/Neg) | Missed pathology (FN/Pos, miss rate) |
+|--:|--:|--:|--:|--:|
+| 0.95 | 0.208 | 94.5% (1,178/1,247) | 48.8% (164/336) | 69/1,247 (5.5%) |
+| 0.98 | 0.066 | 97.8% (1,219/1,247) | 28.9% (97/336) | 28/1,247 (2.3%) |
+| 0.99 | 0.038 | 98.6% (1,230/1,247) | 19.6% (66/336) | 17/1,247 (1.4%) |
+| 0.995 | 0.023 | 99.5% (1,241/1,247) | **10.1% (34/336)** | **6/1,247 (0.48%)** |
+| 0.999 | 0.018 | 99.6% (1,242/1,247) | 7.1% (24/336) | 5/1,247 (0.40%) |
+| 1.000 (test) | 0.016 | 99.8% (1,244/1,247) | 5.7% (19/336) | 3/1,247 (0.24%) |
 
 **Reading:** to be clinically safe you must operate high on this list. A common radiology auto-rule-out bar is **miss rate ≤ 0.5%** → that's the **0.995 row**: the AI can safely auto-clear **~10% of normal studies**, missing ~5 in 1,000 pathologies. Pushing to a near-zero miss (0.24%) drops automation to ~6% of normals. This modest ceiling on safe automation is the direct consequence of v3's ~0.85 AUC (confident-normal region is small).
 

@@ -9,6 +9,28 @@
 
 ---
 
+## 0. Dataset & splits (actual counts)
+
+Patient-grouped 70/15/15 split — every series of a patient stays in one split (no leakage). Study key = `studyID` (a patient); one patient may have multiple series.
+
+**Series counts**
+| split | normal | near_normal | abnormal | total series |
+|---|--:|--:|--:|--:|
+| train | 2,727 | 4,712 | 5,675 | 13,114 |
+| val | 546 | 942 | 1,135 | 2,623 |
+| test | 546 | 942 | 1,135 | 2,623 |
+
+**Patient counts (unique studyID)**
+| split | normal | near_normal | abnormal | total patients |
+|---|--:|--:|--:|--:|
+| train | 1,677 | 2,793 | 3,446 | 7,916 |
+| val | 336 | 558 | 689 | 1,583 |
+| test | 336 | 558 | 689 | 1,583 |
+
+**Test "not-normal" (near_normal + abnormal):** 2,077 series / **1,247 patients** (vs 546 series / 336 patients normal). Series-level metrics use the series counts; patient-level (§6) and the deployment analysis use the patient counts.
+
+---
+
 ## 1. Headline
 
 | metric | val (best, ep3) | **held-out TEST** |

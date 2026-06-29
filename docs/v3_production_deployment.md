@@ -81,6 +81,22 @@ Decision score per patient: **`s = 1 − P(normal)`** (the not-normal/pathology 
 
 ---
 
+## 2b. Test-set composition (where the denominators come from)
+
+All numbers below are on the **held-out test split** (patient-grouped, never seen in training/selection):
+
+| class | series | patients |
+|---|--:|--:|
+| normal | 546 | 336 |
+| near_normal | 942 | 558 |
+| abnormal | 1,135 | 689 |
+| **not-normal (near_normal + abnormal)** | **2,077** | **1,247** |
+| **total** | **2,623** | **1,583** |
+
+The deployment analysis scores **per patient** (mean over a patient's series), so denominators are **patients**: **1,247 not-normal** and **336 normal**. Hence "missed pathology (of 1,247)" = not-normal *patients* that were auto-cleared in error, and "% of normal studies auto-cleared" is out of the **336** normal patients. (Full train/val/test split composition is in `v3_detailed_report.md` §0.)
+
+---
+
 ## 3. Choosing the threshold = choosing a safety budget
 
 Each threshold trades **miss rate** (safety) against **% of normals automated** (savings). Measured on the held-out test set (patient-level, mean aggregation; threshold set on val, applied to test):

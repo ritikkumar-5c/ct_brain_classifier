@@ -120,36 +120,31 @@ Denominators: not-normal patients (Pos) = **1,247**; normal patients (Neg) = **3
 
 ---
 
-## 4. The prevalence effect — workload saved & rule-out safety (NPV)
+## 4. Deployment projection (combined: automation + workload + NPV) — held-out test set
 
-**% of normals automated (specificity) is a fixed model property**, but the **total workload saved** and the **rule-out safety (NPV = of auto-cleared studies, the fraction truly normal)** depend heavily on the **real-world prevalence of normals**. Our test set is *enriched* (only 21% normal), which is NOT a deployment population. Measured at the **0.98-sensitivity / 2.3%-miss** operating point on the held-out test set:
+This merges "how many normal cases can be automated" with "workload saved & rule-out safety" into one table, **measured directly on the held-out test set** (patient-level, mean aggregation — no projection). Test composition: 1,583 patients = **336 normal (21%)** / 1,247 not-normal (79%).
 
-| deployment population | % normal | **% of ALL studies auto-cleared** | **NPV** (auto-clear safety) | pathology missed (% of all studies) |
-|---|--:|--:|--:|--:|
-| enriched test set | 21% | 7.9% | 77.6% | 1.8% |
+| target sens | miss rate | % NORMAL automated (of 336) | workload saved (of 1,583) | NPV (auto-clear safety) | pathology missed (of 1,247, % of all) |
+|--:|--:|--:|--:|--:|--:|
+| 0.95 | 5.5% | 48.8% (164/336) | 14.7% (233/1,583) | 70.4% | 69 (4.4%) |
+| 0.98 | 2.3% | 28.9% (97/336) | 7.9% (125/1,583) | 77.6% | 28 (1.8%) |
+| 0.99 | 1.4% | 19.6% (66/336) | 5.2% (83/1,583) | 79.5% | 17 (1.1%) |
+| 0.995 | 0.48% | **10.1% (34/336)** | 2.5% (40/1,583) | **85.0%** | 6 (0.38%) |
+| 0.999 | 0.40% | 7.1% (24/336) | 1.8% (29/1,583) | 82.8% | 5 (0.32%) |
+| ~1.0 | 0.24% | 5.7% (19/336) | 1.4% (22/1,583) | 86.4% | 3 (0.19%) |
 
-**Two critical takeaways:**
-1. **Validate at the true prevalence.** On the enriched test set the auto-clear NPV is only **77.6%** (≈22% of auto-cleared are actually pathology — unacceptable). NPV is strongly prevalence-dependent: in a genuinely normal-heavy deployment population the *same model* would score markedly higher (confidently-normal predictions are far more likely right when normals dominate). This **must be re-measured on the real production distribution** — the 77.6% here reflects the enriched 21%-normal test set, not a deployment setting.
-2. **Workload saved is small on this distribution:** only **7.9% of all studies** auto-cleared at the 0.98 operating point (normals are just 21% of this enriched set, and at this point ~29% of them are automated). Note the 0.98 point has a **2.3% miss rate** — above the ≤0.5% safety bar used in §3/§5; the real figure scales with the production normal rate and must be measured there.
+*"% NORMAL automated" = specificity (TN/336); "workload saved" = all auto-cleared (TN+FN)/1,583; NPV = TN/(TN+FN); "pathology missed" = FN (of 1,247 not-normal). All measured on the test set.*
 
----
+**Reading.** At the recommended **0.995 / 0.48%-miss** point: the AI auto-clears **~10% of normal studies** (2.5% of the worklist), at **NPV 85%** — i.e. ~15% of auto-cleared studies are still pathology, which is borderline-to-unsafe on this set. Pushing miss rate lower (→0.24%) shrinks automation to ~6% of normals.
 
-## 5. Direct answer — how many normal cases can the AI automate?
-
-| safety budget (miss rate) | required sensitivity | **% of NORMAL studies auto-cleared** | workload saved @80% normal pop. |
-|---|--:|--:|--:|
-| ≤ 1.4% | 99% | **19.6% (66/336)** | ~16% of all studies |
-| **≤ 0.5%** (recommended) | 99.5% | **10.1% (34/336)** | ~8% of all studies |
-| ≤ 0.25% (near-zero) | ~100% | **5.7% (19/336)** | ~5% of all studies |
-
-**Recommended deployment:** operate at **≥99.5% not-normal sensitivity** (≈0.5% miss), score **per-patient with mean aggregation**, deploy **only in a normal-heavy population** (≥80% normal, where NPV ≥ 0.99), keep a **random audit** of auto-cleared studies, and **monitor prevalence/drift** with auto-revert. Expected effect: **~10% of normal studies (≈8% of total worklist) safely removed from radiologist review.**
+⚠️ **Prevalence caveat.** The test set is *enriched* (only 21% normal), which is NOT a deployment population. NPV is prevalence-dependent: it rises in a normal-heavy population and falls in a pathology-heavy one — so these numbers **must be re-measured on the real production distribution** before go-live (a 5.9%-normal week, for example, would push NPV well below acceptable).
 
 ---
 
-## 6. Caveats & how to automate *more* safely
+## 5. Caveats & how to automate *more* safely
 
 - **Calibration & threshold are dataset-specific.** Re-fit the threshold on a held-out slice of the *production* distribution before go-live, and re-check periodically.
-- **The enriched-data NPV warning is real** — do not quote the 8–9% workload number until prevalence is confirmed in production.
+- **The enriched-data NPV warning is real** — §4 is on the 21%-normal test set; re-measure NPV on the true production prevalence before quoting any workload/safety number (a pathology-heavy population pushes NPV down sharply).
 - **This is the v3 ceiling.** To auto-clear a *larger* share of normals at the same safety, the model needs higher AUC. Highest-leverage routes (see `run_comparison_v1_v2_v3.md` §4): **2-class reframe** (normal vs not-normal — directly optimizes this exact decision), **near_normal label cleaning**, and **ensemble + TTA**. A 2-class model targeting this rule-out task could materially raise the safe specificity.
 - **Regulatory:** autonomous rule-out is a clinical decision and typically requires prospective validation and sign-off; treat the above as the analysis that scopes such a study, not a green light.
 

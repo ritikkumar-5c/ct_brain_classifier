@@ -120,18 +120,15 @@ Denominators: not-normal patients (Pos) = **1,247**; normal patients (Neg) = **3
 
 ## 4. The prevalence effect — workload saved & rule-out safety (NPV)
 
-**% of normals automated (specificity) is a fixed model property**, but the **total workload saved** and the **rule-out safety (NPV = of auto-cleared studies, the fraction truly normal)** depend heavily on the **real-world prevalence of normals**. Our test set is *enriched* (only 21% normal), which is NOT a deployment population. Projection at the **0.995-sensitivity / 0.48%-miss** operating point:
+**% of normals automated (specificity) is a fixed model property**, but the **total workload saved** and the **rule-out safety (NPV = of auto-cleared studies, the fraction truly normal)** depend heavily on the **real-world prevalence of normals**. Our test set is *enriched* (only 21% normal), which is NOT a deployment population. Measured at the **0.995-sensitivity / 0.48%-miss** operating point on the held-out test set:
 
 | deployment population | % normal | **% of ALL studies auto-cleared** | **NPV** (auto-clear safety) | pathology missed per 1,000 studies |
 |---|--:|--:|--:|--:|
 | enriched test set | 21% | 2.5% | 0.847 | 3.8 |
-| balanced | 50% | 5.3% | 0.955 | 2.4 |
-| typical ED/outpatient | 80% | 8.2% | 0.988 | 1.0 |
-| screening-heavy | 90% | 9.2% | 0.995 | 0.5 |
 
 **Two critical takeaways:**
-1. **Validate at the true prevalence.** On the enriched test set the auto-clear NPV is only ~0.85 (≈15% of auto-cleared are actually pathology — unacceptable). At a realistic mostly-normal population the **same model** reaches NPV ≈ 0.99, because confidently-normal predictions are far more likely to be right when normals dominate. *Deployment safety is acceptable only in a genuinely normal-heavy population.*
-2. **Workload savings are modest:** ~8–9% of *all* studies removed from the worklist at a safe operating point in a realistic population — meaningful but not dramatic, because we only remove normals and the safe specificity is low.
+1. **Validate at the true prevalence.** On the enriched test set the auto-clear NPV is only **0.85** (≈15% of auto-cleared are actually pathology — unacceptable). NPV is strongly prevalence-dependent: in a genuinely normal-heavy deployment population the *same model* would score markedly higher (confidently-normal predictions are far more likely right when normals dominate). This **must be re-measured on the real production distribution** — the 0.85 here reflects the enriched 21%-normal test set, not a deployment setting.
+2. **Workload saved is small on this distribution:** only **2.5% of all studies** auto-cleared at a safe operating point (normals are just 21% of this enriched set and safe specificity is ~10%). The real figure scales with the production normal rate and must be measured there.
 
 ---
 

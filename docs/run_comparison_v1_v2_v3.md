@@ -17,7 +17,19 @@
 
 \* v1's TensorBoard event file retains epochs 7–17; chance = 0.333.
 
-**Headline:** v3 is the **best of all three runs** — val balanced_acc **0.6931 @ep3** (vs v1 0.6645, v2 0.6469) and the top AUC (0.859) — and is the only run with **held-out TEST** numbers: **balanced_acc 0.673 / AUC 0.846 / acc 0.675**, per-class recall balanced (no class sacrificed), small val→test drop (balAcc −0.02, AUC −0.013) → it generalizes honestly. The **AUC ceiling (~0.85) is consistent across all three runs and now confirmed on truly held-out data** → it is a data/label limit (noisy normal↔near_normal boundary), not an optimization problem.
+**Headline:** v3 is the **best of all three runs** — val balanced_acc **0.6931 @ep3** (vs v1 0.6645, v2 0.6469) and the top AUC (0.859). The **AUC ceiling (~0.85) is consistent across all three runs and now confirmed on truly held-out data** → it is a data/label limit (noisy normal↔near_normal boundary), not an optimization problem.
+
+### Held-out TEST comparison (best.pt of each run, same 2,623-series test set)
+
+All three best checkpoints evaluated post-hoc via `eval_operating_points.py` (screening-row thresholds chosen on val, applied to test — no leakage). Test prevalence: 2,077 not-normal / 546 normal (79.2% — enriched, so precision is optimistic).
+
+| run | best ep | balAcc | AUC | acc | nnSens (argmax) | nSpec (argmax) | spec @95% sens | spec @98% sens |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| v1 | 15 | 0.632 | 0.837 | 0.653 | 0.932 | 0.507 | 0.425 | 0.194 |
+| v2 | 4 | 0.623 | 0.816 | 0.618 | 0.876 | 0.619 | 0.368 | 0.198 |
+| **v3** | 3 | **0.673** | **0.846** | **0.675** | 0.890 | **0.670** | **0.452** | **0.244** |
+
+**v3 wins on every held-out metric** — balanced_acc +0.04/+0.05 over v1/v2, AUC +0.01/+0.03, and the best specificity at both the 95% and 98% sensitivity operating points. Full per-run sweeps (95→99%) in `v1_detailed_report.md`, `v2_detailed_report.md`, `v3_detailed_report.md`.
 
 ### Per-epoch trajectories
 

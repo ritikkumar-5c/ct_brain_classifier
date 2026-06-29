@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from config import get_config, Config
 from data.dicom_dataset import index_studies_from_csv, StudyMILDataset, mil_collate
 from models.maxvit_mil import build_model
-from engine.metrics import pathology_operating_point, apply_operating_point
+from engine.metrics import pathology_operating_point, apply_operating_point, compute_metrics
 
 
 @torch.no_grad()
@@ -55,6 +55,16 @@ def main():
 
     print("[collect] val ..."); vy, vp = collect(model, loader(cfg.val_csv), device, cfg.use_amp)
     print("[collect] test ..."); ty, tp = collect(model, loader(cfg.test_csv), device, cfg.use_amp)
+
+    # full 3-class held-out metrics (val + test)
+    for name, (yy, pp) in [("VAL", (vy, vp)), ("TEST", (ty, tp))]:
+        m = compute_metrics(yy.tolist(), pp.tolist(), cfg.num_classes, class_names=cfg.class_names)
+        print(f"\n=== {name} 3-class metrics (argmax) ===")
+        for k in ("accuracy", "balanced_acc", "auc", "f1", "precision",
+                  "recall_normal", "recall_near_normal", "recall_abnormal",
+                  "normal_specificity", "not_normal_sensitivity"):
+            if k in m:
+                print(f"  {k:28s} = {m[k]:.4f}")
 
     npos = int((ty != 0).sum()); nneg = int((ty == 0).sum())
     print(f"\nTEST set: not_normal(pos)={npos}  normal(neg)={nneg}  prevalence_pos={npos/(npos+nneg):.3f}")

@@ -66,7 +66,7 @@ def main():
           f"test prev_not_normal={n_path/len(ty):.3f})\n")
 
     print("=== Safety operating points (threshold set on val, measured on test) ===")
-    print(f"{'tgtSens':>7} {'thr':>6} | {'tSens':>6} {'tSpec':>6} | {'%NORMAL_auto':>12} {'missedPath':>10} {'missRate':>8}")
+    print(f"{'tgtSens':>7} {'thr':>6} | {'Sens(TP/Pos)':>16} {'Spec=%norm(TN/Neg)':>20} {'missed(FN/Pos)':>16} {'missRate':>8}")
     ops = []
     for tgt in targets:
         th = threshold_for(vy, vs, tgt)
@@ -75,7 +75,8 @@ def main():
         FN = int((~flag & (ty != 0)).sum()); TN = int((~flag & (ty == 0)).sum())
         Se = TP/max(TP+FN, 1); Sp = TN/max(TN+FP, 1)
         ops.append((tgt, th, Se, Sp, FN))
-        print(f"{tgt:>7.3f} {th:>6.3f} | {Se:>6.3f} {Sp:>6.3f} | {Sp*100:>11.1f}% {FN:>10} {1-Se:>8.4f}")
+        print(f"{tgt:>7.3f} {th:>6.3f} | {Se*100:>6.1f}% {TP:>4}/{TP+FN:<4} "
+              f"{Sp*100:>6.1f}% {TN:>3}/{TN+FP:<4} {FN:>4}/{FN+TP:<4} {1-Se:>8.4f}")
 
     print("\n=== Deployment projection at different NOT-NORMAL prevalences ===")
     print("(workload_auto = % of ALL studies auto-cleared; NPV = of auto-cleared, %truly normal;")

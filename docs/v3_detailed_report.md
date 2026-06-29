@@ -88,9 +88,9 @@ Per-class recall is balanced (no class sacrificed); val→test generalization is
 
 ---
 
-## 5. Screening operating points — normal vs not-normal (threshold set on VAL, applied to TEST)
+## 5. Screening operating points — SERIES-level (threshold set on VAL, applied to TEST)
 
-Score = `1 − P(normal)`; threshold maximizes specificity subject to the sensitivity floor.
+Score = `1 − P(normal)`; threshold maximizes specificity subject to the sensitivity floor. Units = 2,623 test series.
 
 | target sens | threshold | not-normal sensitivity | specificity | precision | false-alarm rate (1−spec) | TP / FP / FN / TN |
 |--:|--:|--:|--:|--:|--:|--|
@@ -108,15 +108,40 @@ Score = `1 − P(normal)`; threshold maximizes specificity subject to the sensit
 
 ---
 
-## 6. Comparison to v1 / v2
+## 6. Patient-level evaluation (series → patient aggregation)
 
-| run | best ep | val balAcc | val AUC | overfit onset | per-class stability | test eval |
-|---|--:|--:|--:|---|---|---|
-| v1 | 15 | 0.665 | 0.852 | gradual, by ep8–17 | violent oscillation | not run |
-| v2 | 4 | 0.647 | 0.837 | sharp, by ep3 | oscillation eased | not run |
-| **v3** | 3 | **0.693** | 0.859 | ~ep4 (delayed) | **most stable** | **done** |
+The test set is **2,623 series from 1,583 patients** (926 patients have ≥2 series, up to 8); all series of a patient share the same label. Series-level metrics therefore over-weight multi-series patients and treat correlated series as independent. Aggregating each patient's series to one decision is the honest deployment unit. Two aggregators compared (`eval_patient_level.py`):
+- **mean** — average the softmax across a patient's series.
+- **max** — take the most-pathological series (lowest `P(normal)`) = "flag the patient if *any* series is suspicious".
 
-v3 wins on every axis and is the only run with honest held-out test numbers.
+### 3-class metrics (held-out TEST)
+| eval level | units | acc | balAcc | AUC | rNorm | rNear | rAbn |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| series | 2,623 | 0.675 | 0.673 | 0.846 | 0.670 | 0.659 | 0.690 |
+| **patient [mean]** | 1,583 | **0.687** | **0.687** | **0.854** | 0.699 | 0.658 | 0.704 |
+| patient [max] | 1,583 | 0.680 | 0.671 | 0.852 | 0.631 | 0.665 | 0.717 |
+
+**Patient-level is slightly better, and `mean` wins** — aggregation averages out per-series noise (a mini-ensemble), so the per-series numbers were *not* inflated by correlated samples. `max` shifts toward pathology (normal recall 0.699→0.631), so `mean` is the better aggregator. **Recommendation: deploy with per-patient mean aggregation.**
+
+### Screening operating points — PATIENT-level [mean] (threshold on VAL → TEST; 1,583 patients)
+| target sens | threshold | sensitivity | specificity | precision | FAR (1−spec) | TP / FP / FN / TN |
+|--:|--:|--:|--:|--:|--:|--|
+| 0.95 | 0.208 | 0.945 | 0.488 | 0.873 | 0.512 | 1178 / 172 / 69 / 164 |
+| 0.96 | 0.152 | 0.953 | 0.420 | 0.859 | 0.580 | 1188 / 195 / 59 / 141 |
+| 0.97 | 0.105 | 0.966 | 0.357 | 0.848 | 0.643 | 1204 / 216 / 43 / 120 |
+| 0.98 | 0.066 | 0.978 | 0.289 | 0.836 | 0.711 | 1219 / 239 / 28 / 97 |
+| 0.99 | 0.038 | 0.986 | 0.196 | 0.820 | 0.804 | 1230 / 270 / 17 / 66 |
+
+### Screening operating points — PATIENT-level [max] (threshold on VAL → TEST; 1,583 patients)
+| target sens | threshold | sensitivity | specificity | precision | FAR (1−spec) | TP / FP / FN / TN |
+|--:|--:|--:|--:|--:|--:|--|
+| 0.95 | 0.235 | 0.947 | 0.458 | 0.866 | 0.542 | 1181 / 182 / 66 / 154 |
+| 0.96 | 0.175 | 0.957 | 0.414 | 0.858 | 0.586 | 1194 / 197 / 53 / 139 |
+| 0.97 | 0.116 | 0.968 | 0.351 | 0.847 | 0.649 | 1207 / 218 / 40 / 118 |
+| 0.98 | 0.072 | 0.979 | 0.286 | 0.836 | 0.714 | 1221 / 240 / 26 / 96 |
+| 0.99 | 0.039 | 0.987 | 0.182 | 0.817 | 0.818 | 1231 / 275 / 16 / 61 |
+
+**Across all three granularities the picture holds:** specificity at clinical sensitivity stays low (patient-mean: 49% @95%, 29% @98%) — the ~0.85 AUC ceiling means there's no operating point with both high sensitivity and a tolerable false-alarm load. Per-series probabilities dumped to `series_probs_{val,test}.csv` for free re-aggregation.
 
 ---
 

@@ -145,42 +145,7 @@ The test set is **2,623 series from 1,583 patients** (926 patients have ≥2 ser
 
 ---
 
-## 7. NORMAL-class operating points — "confirm-normal / rule-out" (threshold on VAL → TEST)
-
-Mirror of §5–6 with **normal as the positive class**: score = `P(normal)`, threshold chosen on val to hit a target **Normal Sensitivity** (fraction of true normals correctly called normal), applied to test. *Normal Precision here is the rule-out safety metric — of all cases called "normal", how many truly are; its complement is pathology waved through as normal.* Computed from the dumped `series_probs_*.csv` (`eval_normal_ops.py`, no GPU).
-
-### SERIES-level (2,623 series; normal=546 / not-normal=2,077)
-| target NSens | threshold | Normal Sensitivity | Normal Specificity | Normal Precision | Normal FAR (1−spec) | TP / FP / FN / TN |
-|--:|--:|--:|--:|--:|--:|--|
-| 0.95 | 0.034 | 0.934 | 0.720 | 0.467 | 0.280 | 510 / 581 / 36 / 1496 |
-| 0.96 | 0.021 | 0.949 | 0.664 | 0.426 | 0.336 | 518 / 698 / 28 / 1379 |
-| 0.97 | 0.014 | 0.962 | 0.595 | 0.384 | 0.405 | 525 / 842 / 21 / 1235 |
-| 0.98 | 0.011 | 0.971 | 0.521 | 0.348 | 0.479 | 530 / 994 / 16 / 1083 |
-| 0.99 | 0.008 | 0.985 | 0.354 | 0.286 | 0.646 | 538 / 1341 / 8 / 736 |
-
-### PATIENT-level [mean] (1,583 patients; normal=336 / not-normal=1,247)
-| target NSens | threshold | Normal Sensitivity | Normal Specificity | Normal Precision | Normal FAR (1−spec) | TP / FP / FN / TN |
-|--:|--:|--:|--:|--:|--:|--|
-| 0.95 | 0.040 | 0.940 | 0.729 | 0.483 | 0.271 | 316 / 338 / 20 / 909 |
-| 0.96 | 0.029 | 0.949 | 0.699 | 0.460 | 0.301 | 319 / 375 / 17 / 872 |
-| 0.97 | 0.020 | 0.961 | 0.647 | 0.423 | 0.353 | 323 / 440 / 13 / 807 |
-| 0.98 | 0.014 | 0.970 | 0.589 | 0.389 | 0.411 | 326 / 513 / 10 / 734 |
-| 0.99 | 0.008 | 0.988 | 0.346 | 0.289 | 0.654 | 332 / 815 / 4 / 432 |
-
-### PATIENT-level [max] (1,583 patients; normal=336 / not-normal=1,247)
-| target NSens | threshold | Normal Sensitivity | Normal Specificity | Normal Precision | Normal FAR (1−spec) | TP / FP / FN / TN |
-|--:|--:|--:|--:|--:|--:|--|
-| 0.95 | 0.021 | 0.946 | 0.685 | 0.447 | 0.315 | 318 / 393 / 18 / 854 |
-| 0.96 | 0.014 | 0.961 | 0.624 | 0.408 | 0.376 | 323 / 469 / 13 / 778 |
-| 0.97 | 0.013 | 0.970 | 0.589 | 0.389 | 0.411 | 326 / 512 / 10 / 735 |
-| 0.98 | 0.009 | 0.979 | 0.492 | 0.342 | 0.508 | 329 / 634 / 7 / 613 |
-| 0.99 | 0.007 | 0.985 | 0.351 | 0.290 | 0.649 | 331 / 809 / 5 / 438 |
-
-**Reading:** at 95% normal sensitivity, normal specificity is ~0.72–0.73 (patient-mean best again), but **Normal Precision is only ~0.47–0.48** — when the model calls a case "normal", barely half truly are; the rest are pathology mislabeled as normal (FP = missed pathology). This is the enriched-prevalence effect on the 21% minority class, and it's the formal statement that **confident rule-out is not achievable here** without sacrificing normal sensitivity — the same ~0.85-AUC ceiling, viewed from the normal side.
-
----
-
-## 8. Verdict & next steps
+## 7. Verdict & next steps
 
 **v3 is the strongest 3-class model and is deployment-*candidate* quality for a triage/assist role**, validated on held-out test (balanced_acc 0.673 / AUC 0.846). But:
 - At a clinical high-sensitivity operating point (95% sens), **specificity is only ~45%** → heavy false-alarm load.

@@ -24,6 +24,7 @@ def build_backbone(cfg):
         pretrained=cfg.pretrained,
         num_classes=0,        # remove classifier -> pooled features
         drop_rate=cfg.dropout,
+        drop_path_rate=getattr(cfg, "drop_path", 0.0),  # stochastic depth (no params -> ckpt-compatible)
     )
     feat_dim = backbone.num_features
     if cfg.freeze_backbone:

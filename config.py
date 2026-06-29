@@ -66,7 +66,8 @@ class Config:
     pretrained: bool = True
     freeze_backbone: bool = False             # paper froze all but classifier; False = fine-tune fully (usually better)
     mil_attn_dim: int = 256                   # gated-attention hidden dim
-    dropout: float = 0.04                     # paper Table 3: {0.03, 0.04, 0.05}
+    dropout: float = 0.04                     # paper Table 3: {0.03, 0.04, 0.05} (classifier/MIL head drop_rate)
+    drop_path: float = 0.0                     # stochastic depth (timm drop_path_rate) — KEY backbone regularizer for MaxViT; 0 = off
     num_classes: int = 3                       # normal / near_normal / abnormal
     class_names: Tuple[str, ...] = ("normal", "near_normal", "abnormal")
 

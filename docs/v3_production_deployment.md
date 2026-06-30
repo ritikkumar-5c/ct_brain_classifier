@@ -120,6 +120,29 @@ Denominators: not-normal patients (Pos) = **1,247**; normal patients (Neg) = **3
 
 ---
 
+## 3b. What gets missed? near_normal vs abnormal among the false-negatives
+
+"Missed pathology" (FN) lumps two very different clinical severities together: a **near_normal** study auto-cleared (incidental / borderline finding, low harm) vs a truly **abnormal** study auto-cleared (the genuinely dangerous miss). Breaking the FN column out by true class:
+
+| target sens | threshold | total missed (FN) | near_normal missed | abnormal missed | near : abn split |
+|--:|--:|--:|--:|--:|--:|
+| **0.95** | **0.208** | **69** | **50** | **19** | **72% / 28%** |
+| 0.98 | 0.066 | 28 | 18 | 10 | 64% / 36% |
+| 0.99 | 0.038 | 17 | 10 | 7 | 59% / 41% |
+| 0.995 | 0.023 | 6 | 4 | 2 | 67% / 33% |
+| 0.999 | 0.018 | 5 | 4 | 1 | 80% / 20% |
+| ~1.0 | 0.016 | 3 | 2 | 1 | 67% / 33% |
+
+**At the 0.95 operating point (the 69-case row):** of the 164 normal studies auto-cleared, the dangerous co-travellers are **69 not-normal patients auto-cleared in error = 50 near_normal + 19 abnormal**. So **~72% of the misses are near_normal** (the less-harmful kind) and **~28% (19 cases) are truly abnormal**.
+
+Expressed as per-class miss rates (how likely each class is to be wrongly auto-cleared at 0.95):
+- **near_normal:** 50 / 558 = **9.0%** missed
+- **abnormal:** 19 / 689 = **2.8%** missed
+
+**Why this matters:** the model is **~3× better at holding back truly abnormal studies than near_normal ones** (2.8% vs 9.0% miss). The bulk of the headline "5.5% missed pathology" is the soft normal↔near_normal boundary, not dangerous abnormal findings leaking through. The 19 abnormal misses are the cases that actually drive the safety case — and the reason a higher operating point (0.99+) is needed before this is deployable.
+
+---
+
 ## 4. Deployment projection (combined: automation + workload + NPV) — held-out test set
 
 This merges "how many normal cases can be automated" with "workload saved & rule-out safety" into one table, **measured directly on the held-out test set** (patient-level, mean aggregation — no projection). Test composition: 1,583 patients = **336 normal (21%)** / 1,247 not-normal (79%).

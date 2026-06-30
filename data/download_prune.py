@@ -51,8 +51,8 @@ from pydicom.multival import MultiValue
 
 # ----------------------------------------------------------------------------- static config
 BASE_DIR    = "/root/ritikkumar/"
-CSV_DIR     = os.path.join(BASE_DIR, "data/csvs")
-DATA_DIR    = os.path.join(BASE_DIR, "data")
+CSV_DIR     = "/root/ritikkumar/disk_vdc/train_data/csv"
+DATA_DIR    = "/root/ritikkumar/disk_vdc/train_data"
 LOG_DIR     = os.path.join(BASE_DIR, "gcp/logs")
 env_path    = os.path.join(BASE_DIR, "gcp/pwd.env")
 bucket_name = "5cnetwork-newserver-dicom"

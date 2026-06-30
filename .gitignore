@@ -39,6 +39,11 @@ events.out.tfevents.*
 .env
 *.key
 *credentials*
+# service-account / cloud creds (never commit — public remote)
+gcp.json
+data/gcp.json
+*service_account*
+*-sa.json
 
 # ---- OS / editor ----
 .DS_Store

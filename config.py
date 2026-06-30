@@ -79,6 +79,13 @@ class Config:
     epochs: int = 50                          # paper grid: {25, 40, 50, 100}
     warmup_epochs: int = 2
     use_class_weights: bool = True            # paper used a weighted class function for imbalance
+    # class-balanced oversampling (WeightedRandomSampler over the TRAIN set). Disables
+    # length-bucketing for train when on. sampler_alpha = oversampling strength:
+    #   0.0 = natural frequency (no balancing), 1.0 = fully class-balanced per epoch,
+    #   0.5 = sqrt (mild). With use_class_weights also on, prefer alpha<1 to avoid
+    #   double-correcting the imbalance (over-predicting the rare class).
+    balanced_sampler: bool = False
+    sampler_alpha: float = 0.5
     loss: str = "weighted_ce"                 # weighted_ce | focal | cost_sensitive
     focal_gamma: float = 2.0
     # cost_sensitive: asymmetric costs for under-calling pathology to 'normal'.

@@ -13,7 +13,7 @@ import argparse
 import random
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from config import get_config
 from data.dicom_dataset import (
@@ -72,6 +72,21 @@ def main():
 
     def loader(its, train):
         ds = StudyMILDataset(its, cfg, train=train)
+        # class-balanced oversampling for the imbalanced TRAIN set. Mutually exclusive
+        # with length-bucketing (DataLoader takes either sampler OR batch_sampler), so
+        # bucketing is bypassed for train when this is on; val/test keep their path.
+        if train and cfg.balanced_sampler:
+            labels = np.array([it[2] for it in its])
+            counts = np.clip(np.bincount(labels, minlength=cfg.num_classes), 1, None)
+            cls_w = (1.0 / counts) ** cfg.sampler_alpha          # alpha: 0=natural,1=balanced
+            sample_w = cls_w[labels]
+            sampler = WeightedRandomSampler(
+                torch.as_tensor(sample_w, dtype=torch.double),
+                num_samples=len(its), replacement=True)
+            print(f"balanced_sampler: alpha={cfg.sampler_alpha} class_counts={counts.tolist()} "
+                  f"class_sample_w={np.round(cls_w / cls_w.sum(), 4).tolist()}")
+            return DataLoader(ds, batch_size=cfg.batch_size, sampler=sampler,
+                              num_workers=cfg.num_workers, collate_fn=mil_collate, pin_memory=True)
         if cfg.length_bucketing:
             bsampler = LengthBucketedBatchSampler(
                 effective_lengths(its, cfg, train), cfg.batch_size, shuffle=train,

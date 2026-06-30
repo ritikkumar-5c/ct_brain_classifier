@@ -1,6 +1,6 @@
 """
-Download a single CT study from the OCI `secure-dcm` bucket given its
-StudyInstanceUID (or the api.5cnetwork.com download URL), prune junk/duplicate
+Download CT studies from the OCI `secure-dcm` bucket given StudyInstanceUID(s)
+(bare, an api.5cnetwork.com download URL, or a CSV column), prune junk/duplicate
 series at the STUDY level, then z-sort + anonymize the kept series.
 
 Flow:
@@ -14,13 +14,11 @@ Flow:
   download only the kept series: slices sorted by ImagePositionPatient z,
        anonymized, written as <series>_<N>.dcm
 
-Bone vs soft is decided from the reconstruction kernel (ConvolutionKernel),
-falling back to the display window only when the kernel tag is absent.
-
 Usage (run with the OCI venv, which also has pydicom/dotenv):
     PY=/root/ritikkumar/oci_env/bin/python
 
-    $PY download_study_oci.py <uid|url>                 # prune on (default)
+    $PY download_study_oci.py <uid|url>                 # single study, prune on
+    $PY download_study_oci.py --csv studies.csv         # every study_iuid in CSV
     $PY download_study_oci.py <uid|url> -o /root/ritikkumar/disk_vdc
     $PY download_study_oci.py <uid|url> --no-prune      # download every series
     $PY download_study_oci.py <uid|url> --keep-bone     # keep bone-kernel recons
@@ -45,10 +43,11 @@ from dotenv import load_dotenv
 import oci
 
 # ---------------------------------------------------------------- config
-ENV_PATH          = "/root/ritikkumar/gcp/pwd.env"
+ENV_PATH          = "/root/ritikkumar/ct_brain_classifier/data/pwd.env"
 DATA_DOWNLOAD_DIR = "/root/ritikkumar/disk_vdc"
 BUCKET_NAME       = "secure-dcm"
 WORKERS           = 32
+UID_COLUMN        = "study_iuid"
 
 # --- pruning policy (overridable via CLI) ---
 PRUNE              = True
@@ -331,7 +330,6 @@ def select_keep_set(inspected):
     else:
         keep_set = candidates                     # --keep-bone
 
-    # annotate dropped-bone reasons for logging
     for it in junk:
         if it.get("keep_candidate") and it.get("is_bone"):
             it["reason"] = "bone-kernel recon (duplicate)"
@@ -339,41 +337,21 @@ def select_keep_set(inspected):
 
 
 # ---------------------------------------------------------------- entry
-UID_COLUMN = "study_iuid"
-
-
-def download_from_csv(csv_path, directory=DATA_DOWNLOAD_DIR, skip_existing=True):
-    """Read StudyInstanceUIDs from the `study_iuid` column and download each."""
-    with open(csv_path, newline="") as f:
-        reader = csv.DictReader(f)
-        if UID_COLUMN not in (reader.fieldnames or []):
-            raise ValueError(f"CSV {csv_path} has no '{UID_COLUMN}' column; "
-                             f"found {reader.fieldnames}")
-        uids = [str(r[UID_COLUMN]).strip() for r in reader
-                if r.get(UID_COLUMN) and str(r[UID_COLUMN]).strip()]
-
-    print(f"{len(uids)} study_iuid values in {csv_path}")
-    for n, uid in enumerate(uids, start=1):
-        study_uid = extract_study_uid(uid)
-        out = os.path.join(directory, study_uid)
-        if skip_existing and os.path.isdir(out) and os.listdir(out):
-            print(f"[{n}/{len(uids)}] skip {study_uid} (already downloaded)")
-            continue
-        print(f"[{n}/{len(uids)}] {study_uid}")
-        try:
-            download_study(uid, directory)
-        except Exception as e:
-            print(f"  !! failed {study_uid}: {e}")
-
-
-def download_study(uid_or_url, directory=DATA_DOWNLOAD_DIR):
+def download_study(uid_or_url, directory=DATA_DOWNLOAD_DIR, skip_existing=False):
     study_uid = extract_study_uid(uid_or_url)
     study_path = resolve_study_path(study_uid)
+    study_id = study_path.rstrip("/").split("/")[-1]  # folder = last segment of study_path
+
+    out_root = os.path.join(directory, study_id)
+    if skip_existing and os.path.isdir(out_root) and os.listdir(out_root):
+        print(f"skip {study_id} ({study_uid}) (already downloaded)", flush=True)
+        return
+
     series_map = list_study_objects(study_path)
     if not series_map:
         print(f"No series found for {study_uid} (path {study_path}) in {BUCKET_NAME}")
         return
-    print(f"{study_uid} -> {study_path}: {len(series_map)} series "
+    print(f"{study_uid} -> {study_path} (id {study_id}): {len(series_map)} series "
           f"({sum(len(v) for v in series_map.values())} objects)  "
           f"prune={'ON' if PRUNE else 'OFF'} drop_bone={DROP_BONE_KERNEL and PRUNE}")
 
@@ -398,12 +376,54 @@ def download_study(uid_or_url, directory=DATA_DOWNLOAD_DIR):
     for it in keep_set:
         series = it["series"]
         reason = "bone-kernel kept (only series)" if bone_fallback else it.get("reason", "")
-        series_dir = os.path.join(directory, study_uid, series)
+        series_dir = os.path.join(out_root, series)
         n = download_series(series, it["object_names"], series_dir)
         total += n
         print(f"  keep  {series}: {n}/{it['n_slices']} slices [{reason}] -> {series_dir}")
-    print(f"Done: {len(keep_set)} series, {total} slices under "
-          f"{os.path.join(directory, study_uid)}")
+    print(f"Done: {len(keep_set)} series, {total} slices under {out_root}")
+
+
+def download_from_csv(csv_path, directory=DATA_DOWNLOAD_DIR, skip_existing=True, jobs=1):
+    """Read StudyInstanceUIDs from the `study_iuid` column and download each.
+    `jobs` studies are processed concurrently (each still downloads its own
+    slices in parallel)."""
+    with open(csv_path, newline="") as f:
+        reader = csv.DictReader(f)
+        if UID_COLUMN not in (reader.fieldnames or []):
+            raise ValueError(f"CSV {csv_path} has no '{UID_COLUMN}' column; "
+                             f"found {reader.fieldnames}")
+        seen, uids = set(), []
+        for r in reader:
+            v = str(r.get(UID_COLUMN, "")).strip()
+            if v and v not in seen:
+                seen.add(v)
+                uids.append(v)
+
+    print(f"{len(uids)} unique study_iuid values in {csv_path} (jobs={jobs})", flush=True)
+
+    done = {"n": 0}
+    total = len(uids)
+
+    def handle(uid):
+        try:
+            download_study(uid, directory, skip_existing=skip_existing)
+        except Exception as e:
+            print(f"  !! failed {extract_study_uid(uid)}: {e}", flush=True)
+
+    if jobs <= 1:
+        for uid in uids:
+            done["n"] += 1
+            handle(uid)
+        return
+
+    with futures.ThreadPoolExecutor(max_workers=jobs) as ex:
+        futs = [ex.submit(handle, uid) for uid in uids]
+        for fut in futures.as_completed(futs):
+            done["n"] += 1
+            try:
+                fut.result()
+            except Exception as e:
+                print(f"  !! study task error: {e}", flush=True)
 
 
 if __name__ == "__main__":
@@ -419,6 +439,8 @@ if __name__ == "__main__":
     parser.add_argument("--min-slices", type=int, default=DEFAULT_MIN_SLICES)
     parser.add_argument("--no-skip-existing", action="store_true",
                         help="(CSV mode) re-download studies whose out dir already exists.")
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="(CSV mode) number of studies to download concurrently.")
     args = parser.parse_args()
 
     if not args.target and not args.csv:
@@ -429,6 +451,7 @@ if __name__ == "__main__":
     MIN_SLICES = args.min_slices
 
     if args.csv:
-        download_from_csv(args.csv, args.out_dir, skip_existing=not args.no_skip_existing)
+        download_from_csv(args.csv, args.out_dir, skip_existing=not args.no_skip_existing,
+                          jobs=args.jobs)
     else:
         download_study(args.target, args.out_dir)

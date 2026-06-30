@@ -43,6 +43,35 @@ class GatedAttentionPool(nn.Module):
         return Z, attn
 
 
+class TopKPool(nn.Module):
+    """Per-slice scorer + top-k mean pooling for the binary rule-out head.
+
+    Each slice gets a scalar 'not-normal' score; the bag score is the MEAN of the k
+    highest slice scores (over real, non-padded slices). Unlike the attention-weighted
+    *mean* of GatedAttentionPool, top-k pooling does NOT dilute sparse evidence — a
+    finding present on only 1-2 slices still drives the bag score — which is exactly
+    what is needed so subtle pathology cannot masquerade as a confident normal and
+    contaminate the auto-report bucket. Returns (bag_logit B, slice_scores B x K).
+    """
+    def __init__(self, in_dim, k=8, hidden=256, dropout=0.0):
+        super().__init__()
+        self.k = int(k)
+        self.scorer = nn.Sequential(
+            nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, hidden), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, H, mask):
+        s = self.scorer(H).squeeze(-1)                         # B x K  per-slice not-normal score
+        s = s.masked_fill(~mask, float("-inf"))                # ignore padded slices
+        k = min(self.k, s.size(1))
+        topv, _ = s.topk(k, dim=1)                             # B x k (highest-scoring slices)
+        valid = torch.isfinite(topv)                           # guard bags with < k real slices
+        bag = topv.masked_fill(~valid, 0.0).sum(1) / valid.sum(1).clamp(min=1)   # B
+        return bag, torch.nan_to_num(s, neginf=0.0)
+
+
 class MaxViTMIL(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -54,6 +83,11 @@ class MaxViTMIL(nn.Module):
             nn.Dropout(cfg.dropout),
             nn.Linear(feat_dim, cfg.num_classes),
         )
+        # v5: optional binary rule-out head (top-k pooling) sharing the backbone (multi-task).
+        self.multitask = bool(getattr(cfg, "multitask_ruleout", False))
+        if self.multitask:
+            self.ruleout_pool = TopKPool(feat_dim, k=getattr(cfg, "ruleout_topk", 8),
+                                         hidden=cfg.mil_attn_dim, dropout=cfg.dropout)
 
     def encode_slices(self, bag, mask):
         """bag B x K x 3 x H x W -> H_feats B x K x D (padding zeroed).
@@ -85,13 +119,19 @@ class MaxViTMIL(nn.Module):
         feats = feats * mask.unsqueeze(-1)                     # zero padded slices
         return feats
 
-    def forward(self, bag, mask, return_attn=False):
+    def forward(self, bag, mask, return_attn=False, return_ruleout=False):
         H = self.encode_slices(bag, mask)                      # B x K x D
         Z, attn = self.pool(H, mask)                           # B x D , B x K
         logits = self.head(Z)                                  # B x num_classes
+        if not (return_attn or return_ruleout):
+            return logits                                      # backward-compatible default
+        out = [logits]
         if return_attn:
-            return logits, attn
-        return logits
+            out.append(attn)
+        if return_ruleout:
+            # B not-normal logit (None when the rule-out head is disabled)
+            out.append(self.ruleout_pool(H, mask)[0] if self.multitask else None)
+        return tuple(out)
 
 
 def build_model(cfg):

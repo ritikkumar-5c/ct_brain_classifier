@@ -20,9 +20,10 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from .losses import build_loss
+from .losses import build_loss, build_ruleout_loss
 from .metrics import (compute_metrics, confusion_figure, roc_figure,
-                      pathology_operating_point, apply_operating_point)
+                      pathology_operating_point, apply_operating_point,
+                      ruleout_metrics, score_operating_point, apply_score_threshold)
 from xai.gradcampp import GradCAMpp, denormalize, overlay
 
 
@@ -69,6 +70,11 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.criterion = build_loss(cfg, class_weight.to(device) if class_weight is not None else None)
+        # v5: optional binary rule-out head trained jointly (multi-task)
+        self.multitask = bool(getattr(cfg, "multitask_ruleout", False))
+        if self.multitask:
+            self.ruleout_criterion = build_ruleout_loss(cfg).to(device)
+            self.ruleout_weight = float(getattr(cfg, "ruleout_weight", 0.5))
         self.optimizer = build_optimizer(cfg, model)
         # gradient accumulation -> the scheduler counts OPTIMIZER updates, not batches
         self.accum = max(1, int(getattr(cfg, "grad_accum_steps", 1)))
@@ -150,6 +156,7 @@ class Trainer:
         self.model.train(train)
         phase = "train" if train else "val"
         losses, all_true, all_prob = [], [], []
+        all_ro = []                                    # rule-out scores (multitask only)
         pbar = tqdm(loader, desc=f"[{phase}] epoch {epoch}", leave=False)
         n_batches = len(loader)
         amp_dev = "cuda" if self.use_amp else "cpu"
@@ -161,8 +168,13 @@ class Trainer:
             y = batch["label"].to(self.device)
             with torch.set_grad_enabled(train), \
                     torch.autocast(device_type=amp_dev, dtype=torch.float16, enabled=self.use_amp):
-                logits = self.model(bag, mask)
-                loss = self.criterion(logits, y)
+                if self.multitask:
+                    logits, ro_logit = self.model(bag, mask, return_ruleout=True)
+                    loss = self.criterion(logits, y) \
+                        + self.ruleout_weight * self.ruleout_criterion(ro_logit, (y != 0))
+                else:
+                    logits = self.model(bag, mask)
+                    loss = self.criterion(logits, y)
             if train:
                 # scale by 1/accum so accumulated grads average over the effective batch
                 self.scaler.scale(loss / self.accum).backward()
@@ -183,10 +195,17 @@ class Trainer:
             losses.append(loss.item())
             all_true.extend(y.cpu().tolist())
             all_prob.extend(torch.softmax(logits.float(), 1).detach().cpu().tolist())
+            if self.multitask:
+                all_ro.extend(torch.sigmoid(ro_logit.float()).detach().cpu().tolist())
             pbar.set_postfix(loss=f"{np.mean(losses):.4f}")
 
         metrics = compute_metrics(all_true, all_prob, self.cfg.num_classes,
                                   class_names=self.cfg.class_names)
+        if self.multitask and all_ro:
+            ybin = (np.asarray(all_true) != 0).astype(int)
+            if ybin.min() != ybin.max():           # need both classes for ROC
+                metrics.update(ruleout_metrics(
+                    ybin, all_ro, getattr(self.cfg, "target_sensitivity", 0.95)))
         metrics["loss"] = float(np.mean(losses))
         for k, v in metrics.items():
             self.writer.add_scalar(f"{phase}/{k}", v, epoch)
@@ -257,10 +276,16 @@ class Trainer:
 
             monitor = getattr(self.cfg, "monitor", "f1")
             score = val_metrics.get(monitor, val_metrics["f1"])
+            ro_msg = ""
+            if self.multitask:
+                ro_msg = (f" ro_pauc={val_metrics.get('ruleout_pauc', float('nan')):.4f} "
+                          f"ro_spec@{getattr(self.cfg,'target_sensitivity',0.95):.2f}="
+                          f"{val_metrics.get('ruleout_spec_at_sens', float('nan')):.4f} "
+                          f"ro_auc={val_metrics.get('ruleout_auc', float('nan')):.4f}")
             print(f"epoch {epoch}: val[{monitor}]={score:.4f}  f1={val_metrics['f1']:.4f} "
                   f"bal_acc={val_metrics.get('balanced_acc', float('nan')):.4f} "
                   f"not_normal_sens={val_metrics.get('not_normal_sensitivity', float('nan')):.4f} "
-                  f"auc={val_metrics['auc']:.4f}")
+                  f"auc={val_metrics['auc']:.4f}" + ro_msg)
 
             # checkpoint + early stop on the configured monitor metric (higher = better)
             improved = score > self.best_f1
@@ -287,17 +312,47 @@ class Trainer:
     @torch.no_grad()
     def _collect_probs(self, loader):
         """Run a loader through the model -> (y_true, y_prob) arrays."""
+        ys, ps, _, _ = self._collect_scores(loader)
+        return ys, ps
+
+    @torch.no_grad()
+    def _collect_scores(self, loader):
+        """One pass -> (y_true, prob3, ruleout_score, study_ids).
+
+        ruleout_score is the sigmoid of the binary rule-out head (P(not-normal)), or
+        None when the rule-out head is disabled.
+        """
         self.model.eval()
-        ys, ps = [], []
+        ys, ps, ros, sids = [], [], [], []
         for batch in loader:
             bag = batch["bag"].to(self.device)
             mask = batch["mask"].to(self.device)
             with torch.autocast(device_type="cuda" if self.use_amp else "cpu",
                                 dtype=torch.float16, enabled=self.use_amp):
-                logits = self.model(bag, mask)
+                if self.multitask:
+                    logits, ro_logit = self.model(bag, mask, return_ruleout=True)
+                    ros.extend(torch.sigmoid(ro_logit.float()).cpu().tolist())
+                else:
+                    logits = self.model(bag, mask)
             ys.extend(batch["label"].tolist())
             ps.extend(torch.softmax(logits.float(), 1).cpu().tolist())
-        return np.array(ys), np.array(ps)
+            sids.extend(batch["study_id"])
+        return np.array(ys), np.array(ps), (np.array(ros) if ros else None), sids
+
+    def _dump_probs(self, path, sids, ys, p3, ro):
+        """Write per-study probabilities (incl. the rule-out score) for downstream
+        operating-point / conformal analysis."""
+        import csv
+        names = (list(self.cfg.class_names)
+                 if self.cfg.class_names and len(self.cfg.class_names) == p3.shape[1]
+                 else [str(i) for i in range(p3.shape[1])])
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["study_id", "label"] + [f"p_{n}" for n in names] + ["p_ruleout"])
+            for i in range(len(ys)):
+                w.writerow([sids[i], int(ys[i])]
+                           + [float(x) for x in p3[i]]
+                           + [float(ro[i]) if ro is not None else ""])
 
     # ---------- held-out test ----------
     @torch.no_grad()
@@ -307,15 +362,19 @@ class Trainer:
         if os.path.exists(path):
             state = torch.load(path, map_location=self.device, weights_only=False)
             self.model.load_state_dict(state["model"])
-        all_true, all_prob = self._collect_probs(loader)
+        all_true, all_prob, all_ro, all_sid = self._collect_scores(loader)
         metrics = compute_metrics(all_true, all_prob, self.cfg.num_classes,
                                   class_names=self.cfg.class_names)
+
+        # collect val once (used by both the 3-class and rule-out operating points)
+        v_true = v_prob = v_ro = v_sid = None
+        if self.val_loader is not None:
+            v_true, v_prob, v_ro, v_sid = self._collect_scores(self.val_loader)
 
         # Clinical operating point: choose the pathology-flag threshold on VAL to hit
         # the target not-normal sensitivity, then report sens/spec on TEST at that
         # threshold (no test leakage). Only meaningful for the 3-class screening view.
-        if self.cfg.num_classes >= 3 and self.val_loader is not None:
-            v_true, v_prob = self._collect_probs(self.val_loader)
+        if self.cfg.num_classes >= 3 and v_true is not None:
             op = pathology_operating_point(v_true, v_prob,
                                            target_sensitivity=getattr(self.cfg, "target_sensitivity", 0.95))
             test_op = apply_operating_point(all_true, all_prob, op["threshold"])
@@ -327,6 +386,31 @@ class Trainer:
             print(f"[operating point @target_sens={op['target']:.2f}] "
                   f"thr={op['threshold']:.3f} | val sens/spec={op['sensitivity']:.3f}/{op['specificity']:.3f} "
                   f"| TEST sens/spec={test_op['op_sensitivity']:.3f}/{test_op['op_specificity']:.3f}")
+
+        # Rule-out head (v5): the AUTO-REPORT gate. Report tail metrics on TEST and the
+        # threshold-on-val -> applied-to-test operating point at the target sensitivity.
+        if self.multitask and all_ro is not None:
+            tgt = getattr(self.cfg, "target_sensitivity", 0.95)
+            tbin = (all_true != 0).astype(int)
+            metrics.update(ruleout_metrics(tbin, all_ro, tgt))
+            if v_ro is not None:
+                vbin = (v_true != 0).astype(int)
+                rop = score_operating_point(vbin, v_ro, tgt)
+                rtest = apply_score_threshold(tbin, all_ro, rop["threshold"])
+                metrics["ruleout_op_threshold"] = rop["threshold"]
+                metrics["ruleout_op_val_specificity"] = rop["specificity"]
+                metrics["ruleout_op_test_sensitivity"] = rtest["op_sensitivity"]
+                metrics["ruleout_op_test_specificity"] = rtest["op_specificity"]
+                print(f"[RULE-OUT @target_sens={tgt:.2f}] thr={rop['threshold']:.3f} "
+                      f"| val spec={rop['specificity']:.3f} "
+                      f"| TEST sens/spec={rtest['op_sensitivity']:.3f}/{rtest['op_specificity']:.3f} "
+                      f"| TEST ruleout_auc={metrics['ruleout_auc']:.3f} pauc={metrics['ruleout_pauc']:.3f}")
+            # dump per-study probs for downstream conformal / operating-point analysis
+            self._dump_probs(os.path.join(self.cfg.out_dir, "series_probs_test.csv"),
+                             all_sid, all_true, all_prob, all_ro)
+            if v_ro is not None:
+                self._dump_probs(os.path.join(self.cfg.out_dir, "series_probs_val.csv"),
+                                 v_sid, v_true, v_prob, v_ro)
 
         w = SummaryWriter(self.cfg.out_dir)                       # writer was closed after fit()
         for k, v in metrics.items():

@@ -64,6 +64,65 @@ def compute_metrics(y_true, y_prob, num_classes=2, class_names=None, normal_inde
     return out
 
 
+def ruleout_metrics(y_true_bin, score, target_sensitivity=0.95):
+    """Metrics for the binary rule-out head. `score` = P(not-normal) (higher = flag).
+
+    Reports full AUC plus two TAIL-focused numbers used to track/select v5:
+      * ruleout_spec_at_sens — max specificity at sensitivity >= target (the single
+        auto-report operating point), and
+      * ruleout_pauc — MEAN of that specificity over a grid of sensitivities in
+        [target, ~1], i.e. a smooth 'how good is the whole high-sensitivity region'
+        score. Smoother than a single point, so it's the preferred checkpoint monitor.
+    """
+    y_true_bin = np.asarray(y_true_bin).astype(int)
+    score = np.asarray(score, dtype=float)
+    out = {}
+    try:
+        out["ruleout_auc"] = float(roc_auc_score(y_true_bin, score))
+    except ValueError:
+        out["ruleout_auc"] = float("nan")
+        out["ruleout_spec_at_sens"] = float("nan")
+        out["ruleout_pauc"] = float("nan")
+        return out
+    fpr, tpr, _ = roc_curve(y_true_bin, score)
+
+    def spec_at(t):
+        ok = tpr >= t
+        return float(1.0 - fpr[ok].min()) if ok.any() else 0.0
+
+    out["ruleout_spec_at_sens"] = spec_at(target_sensitivity)
+    grid = np.linspace(target_sensitivity, 0.999, 20)
+    out["ruleout_pauc"] = float(np.mean([spec_at(t) for t in grid]))
+    return out
+
+
+def score_operating_point(y_true_bin, score, target_sensitivity=0.95):
+    """Threshold on a 1-D score maximizing specificity s.t. sensitivity >= target."""
+    y_true_bin = np.asarray(y_true_bin).astype(int)
+    score = np.asarray(score, dtype=float)
+    if y_true_bin.min() == y_true_bin.max():
+        return {"threshold": float("nan"), "sensitivity": float("nan"), "specificity": float("nan")}
+    fpr, tpr, thr = roc_curve(y_true_bin, score)
+    ok = tpr >= target_sensitivity
+    if ok.any():
+        cand = np.where(ok)[0]
+        idx = int(cand[np.argmin(fpr[cand])])
+    else:
+        idx = int(np.argmax(tpr))
+    return {"threshold": float(thr[idx]), "sensitivity": float(tpr[idx]),
+            "specificity": float(1.0 - fpr[idx])}
+
+
+def apply_score_threshold(y_true_bin, score, threshold):
+    """Sensitivity/specificity of a 1-D score at a fixed threshold (>= flags positive)."""
+    y_true_bin = np.asarray(y_true_bin).astype(bool)
+    flag = np.asarray(score, dtype=float) >= threshold
+    npos = max(int(y_true_bin.sum()), 1)
+    nneg = max(int((~y_true_bin).sum()), 1)
+    return {"op_sensitivity": float((flag & y_true_bin).sum() / npos),
+            "op_specificity": float((~flag & ~y_true_bin).sum() / nneg)}
+
+
 def pathology_operating_point(y_true, y_prob, target_sensitivity=0.95, normal_index=0):
     """Pick a threshold on the pathology score s = 1 - P(normal) that MAXIMIZES
     specificity subject to (normal-vs-not-normal) sensitivity >= target.

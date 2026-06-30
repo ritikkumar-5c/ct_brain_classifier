@@ -66,6 +66,21 @@ class Config:
     pretrained: bool = True
     freeze_backbone: bool = False             # paper froze all but classifier; False = fine-tune fully (usually better)
     mil_attn_dim: int = 256                   # gated-attention hidden dim
+    # ----- rule-out multi-task head (v5): binary normal-vs-not-normal AUTO-REPORT gate -----
+    # A SECOND head on top-k slice pooling, trained with a partial-AUC (pAUC) surrogate to
+    # grow the high-confidence-normal TAIL = maximize specificity at very high sensitivity
+    # (the auto-clear operating region). The 3-class gated-attention head is kept unchanged
+    # for triage (near_normal / abnormal buckets). Top-k pooling (vs the main head's
+    # attention-weighted MEAN) does not dilute a sparse finding on 1-2 slices, so subtle
+    # pathology can't masquerade as a confident normal. multitask_ruleout=False => v1-v4 behavior.
+    multitask_ruleout: bool = False
+    ruleout_weight: float = 0.5               # weight of the rule-out loss added to the main (3-class) loss
+    ruleout_topk: int = 8                     # # top-scoring slices averaged for the bag not-normal score
+    ruleout_pauc_lambda: float = 1.0          # weight of the partial-AUC rank term inside the rule-out loss
+    ruleout_pos_frac: float = 0.5             # fraction of HARDEST (lowest-scoring) positives used in the pAUC term
+    ruleout_neg_frac: float = 1.0             # fraction of HARDEST (highest-scoring) negatives used in the pAUC term
+    ruleout_margin: float = 1.0               # squared-hinge margin in the pAUC rank term
+    ruleout_bce_pos_weight: float = 1.0       # pos_weight in the rule-out BCE term (>1 penalizes false-clears more)
     dropout: float = 0.04                     # paper Table 3: {0.03, 0.04, 0.05} (classifier/MIL head drop_rate)
     drop_path: float = 0.0                     # stochastic depth (timm drop_path_rate) — KEY backbone regularizer for MaxViT; 0 = off
     num_classes: int = 3                       # normal / near_normal / abnormal
@@ -98,6 +113,8 @@ class Config:
     # "don't miss pathology", balanced_acc (mean per-class recall) is preferred over
     # f1: it rewards recall on near_normal/abnormal and can't be gamed by over-calling.
     # options: balanced_acc | f1 | not_normal_sensitivity | accuracy | auc
+    #   + (multitask_ruleout only): ruleout_pauc (mean specificity over the high-sensitivity
+    #     region — the tail-growth selection metric) | ruleout_spec_at_sens | ruleout_auc
     monitor: str = "balanced_acc"
     target_sensitivity: float = 0.95          # not-normal sensitivity floor for the test operating point
     early_stop_patience: int = 10             # epochs w/o monitor improvement

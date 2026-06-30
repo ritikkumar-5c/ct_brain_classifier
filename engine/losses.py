@@ -50,6 +50,61 @@ class CostSensitiveLoss(nn.Module):
         return loss
 
 
+class RuleOutLoss(nn.Module):
+    """Auxiliary loss on the binary rule-out head (not-normal=1 vs normal=0).
+
+    Combines two terms:
+      * BCE-with-logits (optional pos_weight) — calibrates the bag not-normal score.
+      * a PARTIAL-AUC pairwise surrogate that concentrates gradient on the high-
+        sensitivity / low-false-clear operating region used for auto-report:
+        within the batch, take the HARDEST positives (the lowest-scoring not-normal
+        cases — these set where a high-sensitivity threshold must sit) and the
+        HARDEST negatives (the highest-scoring normals — the would-be false clears),
+        and apply a squared-hinge ranking penalty max(0, margin-(s_pos-s_neg))^2 over
+        those pairs. Pushing exactly those pairs apart grows the high-p_normal tail
+        (raises specificity at the target sensitivity) far more directly than a plain
+        BCE/CE, which spreads effort across the whole score range.
+
+    pos_frac/neg_frac in (0,1] select the hard subsets; with small batches keep
+    neg_frac=1.0 (few normals per batch) and pos_frac<1 to focus on hard pathology.
+    The pAUC term is skipped for any batch missing either class.
+    """
+    def __init__(self, pauc_lambda=1.0, pos_frac=0.5, neg_frac=1.0,
+                 margin=1.0, bce_pos_weight=1.0):
+        super().__init__()
+        self.pauc_lambda = float(pauc_lambda)
+        self.pos_frac = float(pos_frac)
+        self.neg_frac = float(neg_frac)
+        self.margin = float(margin)
+        self.register_buffer("pos_weight", torch.tensor(float(bce_pos_weight)))
+
+    def forward(self, logit, target):
+        logit = logit.flatten()
+        target = target.flatten().float()                       # 1 = not-normal, 0 = normal
+        loss = F.binary_cross_entropy_with_logits(
+            logit, target, pos_weight=self.pos_weight.to(logit.device))
+        pos = logit[target > 0.5]
+        neg = logit[target <= 0.5]
+        if self.pauc_lambda > 0 and pos.numel() > 0 and neg.numel() > 0:
+            kp = max(1, int(round(self.pos_frac * pos.numel())))
+            kn = max(1, int(round(self.neg_frac * neg.numel())))
+            hard_pos = pos.topk(min(kp, pos.numel()), largest=False).values   # low-scoring pathology
+            hard_neg = neg.topk(min(kn, neg.numel()), largest=True).values    # high-scoring normals
+            diff = self.margin - (hard_pos.unsqueeze(1) - hard_neg.unsqueeze(0))   # kp x kn
+            loss = loss + self.pauc_lambda * torch.clamp(diff, min=0).pow(2).mean()
+        return loss
+
+
+def build_ruleout_loss(cfg):
+    return RuleOutLoss(
+        pauc_lambda=getattr(cfg, "ruleout_pauc_lambda", 1.0),
+        pos_frac=getattr(cfg, "ruleout_pos_frac", 0.5),
+        neg_frac=getattr(cfg, "ruleout_neg_frac", 1.0),
+        margin=getattr(cfg, "ruleout_margin", 1.0),
+        bce_pos_weight=getattr(cfg, "ruleout_bce_pos_weight", 1.0),
+    )
+
+
 def build_cost_matrix(cfg):
     """Cost matrix C[true, pred]: 0 on diagonal, 1 for generic errors, and a
     higher cost for under-calling pathology to 'normal' (index 0)."""

@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v3 CT-Brain Test-Set Analysis</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#161c24; --panel2:#1d2530; --line:#2a3340;
+    --text:#e6edf3; --dim:#8b98a5; --accent:#4f9cf9;
+    --normal:#3fb950; --near:#d29922; --abn:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--text)}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);
+         display:flex;align-items:center;gap:18px;flex-wrap:wrap;position:sticky;top:0;z-index:20}
+  h1{font-size:16px;margin:0;font-weight:650}
+  .muted{color:var(--dim)}
+  .tabs{display:flex;gap:6px}
+  .tab{padding:7px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);
+       cursor:pointer;color:var(--dim);font-weight:600}
+  .tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .stats{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--dim)}
+  .stats b{color:var(--text)}
+  .controls{padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);
+            display:flex;gap:14px;align-items:center;flex-wrap:wrap;position:sticky;top:53px;z-index:19}
+  .controls label{font-size:12px;color:var(--dim);display:flex;flex-direction:column;gap:3px}
+  select,input[type=text]{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+        border-radius:6px;padding:6px 9px;font-size:13px;min-width:120px}
+  input[type=text]{min-width:240px}
+  .chk{flex-direction:row;align-items:center;gap:6px;margin-top:14px}
+  .wrap{padding:0 20px 40px}
+  table{width:100%;border-collapse:collapse;font-size:12.7px}
+  thead th{position:sticky;top:104px;background:var(--panel);text-align:left;padding:9px 8px;
+           border-bottom:2px solid var(--line);color:var(--dim);font-weight:600;cursor:pointer;white-space:nowrap;z-index:10}
+  tbody td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:var(--panel2)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+  .path{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+  .iuid{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{display:inline-block;padding:2px 8px;border-radius:11px;font-size:11px;font-weight:650}
+  .b-normal{background:rgba(63,185,80,.16);color:var(--normal)}
+  .b-near{background:rgba(210,153,34,.16);color:var(--near)}
+  .b-abn{background:rgba(248,81,73,.16);color:var(--abn)}
+  .bucket{font-size:10.5px;font-weight:700;letter-spacing:.3px}
+  .bar{display:inline-flex;height:9px;width:130px;border-radius:5px;overflow:hidden;vertical-align:middle;background:#0a0e13}
+  .bar>span{display:block;height:100%}
+  .s-normal{background:var(--normal)} .s-near{background:var(--near)} .s-abn{background:var(--abn)}
+  .ok{color:var(--normal);font-weight:700}
+  .bad{color:var(--abn);font-weight:700}
+  .danger td{background:rgba(248,81,73,.09)}
+  .pager{display:flex;gap:10px;align-items:center;padding:12px 0;color:var(--dim)}
+  .pager button{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+                border-radius:6px;padding:5px 12px;cursor:pointer}
+  .pager button:disabled{opacity:.4;cursor:default}
+  /* drawer */
+  #drawer{position:fixed;top:0;right:0;height:100%;width:min(880px,94vw);background:var(--panel);
+          border-left:1px solid var(--line);transform:translateX(100%);transition:transform .2s;
+          z-index:50;overflow-y:auto;box-shadow:-8px 0 30px rgba(0,0,0,.4)}
+  #drawer.open{transform:translateX(0)}
+  .dhead{padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:2}
+  .dbody{padding:16px 20px}
+  .close{float:right;cursor:pointer;color:var(--dim);font-size:22px;line-height:1}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:5px 12px;font-size:12.7px;margin:10px 0}
+  .kv div:nth-child(odd){color:var(--dim)}
+  .findings{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px 12px;margin:8px 0;font-size:12.7px}
+  .tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:5px;
+       padding:2px 7px;margin:2px 3px 2px 0;font-size:11.5px}
+  .camctl{display:flex;gap:8px;align-items:center;margin:14px 0 8px;flex-wrap:wrap}
+  .camctl button{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+                 border-radius:6px;padding:7px 13px;cursor:pointer;font-weight:600}
+  .camctl button.gen{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:12px}
+  .cell{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px}
+  .cell img{width:100%;border-radius:5px;display:block;background:#000;image-rendering:auto}
+  .cell .meta{font-size:11px;color:var(--dim);margin-top:5px;display:flex;justify-content:space-between}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line);
+        border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .toggleimg{cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+  <h1>v3 CT-Brain <span class="muted">·  Test-Set Analysis &amp; Explainable AI</span></h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<div class="controls">
+  <label>Operating point (Stage-1 abnormal-sensitivity)
+    <select id="op"></select>
+  </label>
+  <label>Actual class
+    <select id="fActual"><option value="">all</option><option>normal</option><option>near_normal</option><option>abnormal</option></select>
+  </label>
+  <label>Predicted (cascade)
+    <select id="fPred"><option value="">all</option><option>normal</option><option>near_normal</option><option>abnormal</option></select>
+  </label>
+  <label>Triage bucket
+    <select id="fBucket"><option value="">all</option><option value="escalate">escalate (priority)</option><option value="light">light review</option><option value="autoclear">auto-clear (normal)</option></select>
+  </label>
+  <label class="chk"><input type="checkbox" id="fWrong"> mispredictions only</label>
+  <label class="chk"><input type="checkbox" id="fFalseClear"> false-clears only</label>
+  <label>Search (iuid / path / id)
+    <input type="text" id="q" placeholder="type to filter…">
+  </label>
+  <div style="margin-top:14px" class="muted" id="tinfo"></div>
+</div>
+
+<div class="wrap">
+  <table>
+    <thead><tr id="hrow"></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="pager">
+    <button id="prev">‹ prev</button>
+    <span id="pinfo"></span>
+    <button id="next">next ›</button>
+  </div>
+</div>
+
+<div id="drawer"><div class="dhead"><span class="close" id="dclose">×</span><div id="dtitle"></div></div><div class="dbody" id="dbody"></div></div>
+
+<script>
+const CLASSES = ["normal","near_normal","abnormal"];
+const SHORT = {normal:"b-normal", near_normal:"b-near", abnormal:"b-abn"};
+const COLS = [
+  ["#","idx"],["study_path / id","path"],["StudyInstanceUID","iuid"],
+  ["Actual (radiologist)","actual"],["Cascade prediction","pred"],
+  ["Triage","bucket"],["p(normal/near/abn)","probs"],["✓","ok"]
+];
+let DATA=null, DS="heldout", PAGE=0, PER=200, sortKey="idx", sortDir=1, VIEW=[];
+
+function classBadge(name){return `<span class="badge ${SHORT[name]||''}">${name}</span>`;}
+function cascade(c,T1,T2){
+  if(c.p_abn>=T1) return {cls:2,bucket:"escalate"};
+  const padj=c.p_near/(c.p_near+c.p_normal+1e-9);
+  if(padj>=T2) return {cls:1,bucket:"light"};
+  return {cls:0,bucket:"autoclear"};
+}
+const BUCKET_LBL={escalate:"ESCALATE",light:"LIGHT REVIEW",autoclear:"AUTO-CLEAR"};
+const BUCKET_COL={escalate:"var(--abn)",light:"var(--near)",autoclear:"var(--normal)"};
+
+function currentThr(){
+  const op=document.getElementById("op").value;
+  return DATA.datasets[DS].thresholds[op];
+}
+function enrich(){
+  const {T1,T2}=currentThr();
+  DATA.datasets[DS].cases.forEach((c,i)=>{
+    const r=cascade(c,T1,T2);
+    c._i=i; c._predIdx=r.cls; c._pred=CLASSES[r.cls]; c._bucket=r.bucket;
+    c._correct = r.cls===c.actual_idx;
+    c._falseClear = (r.bucket==="autoclear") && (c.actual_idx!==0);  // not-normal cleared as normal
+  });
+}
+function applyFilters(){
+  const q=document.getElementById("q").value.trim().toLowerCase();
+  const fa=document.getElementById("fActual").value;
+  const fp=document.getElementById("fPred").value;
+  const fb=document.getElementById("fBucket").value;
+  const fw=document.getElementById("fWrong").checked;
+  const ff=document.getElementById("fFalseClear").checked;
+  VIEW=DATA.datasets[DS].cases.filter(c=>{
+    if(fa && c.actual!==fa) return false;
+    if(fp && c._pred!==fp) return false;
+    if(fb && c._bucket!==fb) return false;
+    if(fw && c._correct) return false;
+    if(ff && !c._falseClear) return false;
+    if(q){
+      const hay=(c.iuid+" "+c.study_path+" "+c.pid+" "+(c.findings||"")).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  sortView(); PAGE=0; render();
+}
+function sortView(){
+  const k=sortKey;
+  VIEW.sort((a,b)=>{
+    let x,y;
+    if(k==="idx"){x=a._i;y=b._i;}
+    else if(k==="path"){x=a.study_path;y=b.study_path;}
+    else if(k==="iuid"){x=a.iuid;y=b.iuid;}
+    else if(k==="actual"){x=a.actual_idx;y=b.actual_idx;}
+    else if(k==="pred"){x=a._predIdx;y=b._predIdx;}
+    else if(k==="bucket"){x=a._bucket;y=b._bucket;}
+    else if(k==="probs"){x=a.p_abn;y=b.p_abn;}
+    else if(k==="ok"){x=a._correct?1:0;y=b._correct?1:0;}
+    if(x<y)return -1*sortDir; if(x>y)return 1*sortDir; return 0;
+  });
+}
+function render(){
+  const tb=document.getElementById("rows"); tb.innerHTML="";
+  const start=PAGE*PER, slice=VIEW.slice(start,start+PER);
+  const frag=document.createDocumentFragment();
+  slice.forEach((c,n)=>{
+    const tr=document.createElement("tr");
+    if(c._falseClear) tr.className="danger";
+    const bar=`<span class="bar"><span class="s-normal" style="width:${c.p_normal*100}%"></span><span class="s-near" style="width:${c.p_near*100}%"></span><span class="s-abn" style="width:${c.p_abn*100}%"></span></span>`;
+    const actualCell = c.radiologist_class ? classBadge(c.actual)+` <span class="muted mono">${c.radiologist_class}</span>` : classBadge(c.actual);
+    tr.innerHTML=`
+      <td class="mono muted">${start+n+1}</td>
+      <td><div class="path mono" title="${c.study_path}">${c.study_path||"—"}</div><div class="mono muted">${c.pid}</div></td>
+      <td class="iuid mono" title="${c.iuid}">${c.iuid||"—"}</td>
+      <td>${actualCell}</td>
+      <td>${classBadge(c._pred)}</td>
+      <td class="bucket" style="color:${BUCKET_COL[c._bucket]}">${BUCKET_LBL[c._bucket]}</td>
+      <td>${bar} <span class="mono muted">${c.p_normal.toFixed(2)}/${c.p_near.toFixed(2)}/${c.p_abn.toFixed(2)}</span></td>
+      <td>${c._correct?'<span class="ok">✓</span>':'<span class="bad">✕</span>'}</td>`;
+    tr.onclick=()=>openDrawer(c);
+    frag.appendChild(tr);
+  });
+  tb.appendChild(frag);
+  const total=VIEW.length, pages=Math.max(1,Math.ceil(total/PER));
+  document.getElementById("pinfo").textContent=`page ${PAGE+1} / ${pages}  ·  showing ${slice.length} of ${total}`;
+  document.getElementById("prev").disabled=PAGE<=0;
+  document.getElementById("next").disabled=PAGE>=pages-1;
+  // summary
+  const fc=VIEW.filter(c=>c._falseClear).length, wrong=VIEW.filter(c=>!c._correct).length;
+  document.getElementById("tinfo").innerHTML=`matched <b>${total}</b> · mispredicted ${wrong} · <span class="bad">false-clears ${fc}</span>`;
+}
+
+function buildTabs(){
+  const t=document.getElementById("tabs"); t.innerHTML="";
+  Object.keys(DATA.datasets).forEach(k=>{
+    const d=DATA.datasets[k];
+    const el=document.createElement("div");
+    el.className="tab"+(k===DS?" active":"");
+    el.textContent=d.name+` (${d.n_studies})`;
+    el.onclick=()=>{DS=k; buildTabs(); buildStats(); enrich(); applyFilters();};
+    t.appendChild(el);
+  });
+}
+function buildStats(){
+  const d=DATA.datasets[DS], c=d.counts;
+  document.getElementById("stats").innerHTML=
+    `<span>model <b>${DATA.model}</b></span>`+
+    `<span>studies <b>${d.n_studies}</b></span>`+
+    `<span>normal <b>${c.normal}</b> · near <b>${c.near_normal}</b> · abn <b>${c.abnormal}</b></span>`+
+    `<span>AUC abn-vs-rest <b>${d.auc_abn_vs_rest}</b> · near-vs-normal <b>${d.auc_near_vs_normal??'—'}</b></span>`;
+  const op=document.getElementById("op");
+  const keep=op.value;
+  op.innerHTML="";
+  Object.keys(d.thresholds).sort().forEach(k=>{
+    const o=document.createElement("option"); o.value=k;
+    o.textContent=`abn-sens ${k}  (T1=${d.thresholds[k].T1.toFixed(3)}, T2=${d.thresholds[k].T2.toFixed(3)})`;
+    op.appendChild(o);
+  });
+  op.value=(keep && d.thresholds[keep])?keep:"0.98";
+}
+
+// ---------- drawer / GradCAM ----------
+let CUR=null;
+function openDrawer(c){
+  CUR=c;
+  document.getElementById("dtitle").innerHTML=
+    `<div style="font-size:15px;font-weight:650">${c.pid} ${classBadge(c._pred)}</div>
+     <div class="muted mono" style="font-size:11.5px;margin-top:3px">${c.study_path}</div>`;
+  const findings = c.findings ? c.findings.split("|").map(s=>`<span class="tag">${s.trim()}</span>`).join("") : '<span class="muted">— none recorded —</span>';
+  const {T1,T2}=currentThr();
+  const padj=(c.p_near/(c.p_near+c.p_normal+1e-9));
+  document.getElementById("dbody").innerHTML=`
+    <div class="kv">
+      <div>StudyInstanceUID</div><div class="mono" style="word-break:break-all">${c.iuid||"— not available —"}</div>
+      <div>Study name</div><div>${c.study_name||"—"}</div>
+      <div>Actual (radiologist)</div><div>${classBadge(c.actual)} ${c.radiologist_class?('<span class="muted mono">'+c.radiologist_class+'</span>'):''}</div>
+      <div>Cascade prediction</div><div>${classBadge(c._pred)} <span class="bucket" style="color:${BUCKET_COL[c._bucket]}">${BUCKET_LBL[c._bucket]}</span> ${c._correct?'<span class="ok">✓ correct</span>':'<span class="bad">✕ mismatch</span>'}</div>
+      <div>v3 mean probs</div><div class="mono">normal ${c.p_normal.toFixed(3)} · near ${c.p_near.toFixed(3)} · abn ${c.p_abn.toFixed(3)}</div>
+      <div>Cascade logic</div><div class="mono muted">p_abn ${c.p_abn.toFixed(3)} vs T1 ${T1.toFixed(3)} → ${c.p_abn>=T1?'ABN':'pass'}; p_adj(near) ${padj.toFixed(3)} vs T2 ${T2.toFixed(3)}</div>
+    </div>
+    <div><b>Radiologist findings</b><div class="findings">${findings}</div></div>
+    <div class="camctl">
+      <b>Grad-CAM++ explains:</b>
+      <button data-t="2" class="gen">abnormal</button>
+      <button data-t="1">near_normal</button>
+      <button data-t="0">normal</button>
+      <span id="camstatus" class="muted"></span>
+    </div>
+    <div id="camgrid" class="grid"></div>`;
+  document.querySelectorAll(".camctl button").forEach(b=>b.onclick=()=>runCam(parseInt(b.dataset.t)));
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("camgrid").innerHTML=`<div class="muted">Choose a target class above to render Grad-CAM++ overlays for the top-attended slices.</div>`;
+}
+async function runCam(target){
+  const st=document.getElementById("camstatus"), grid=document.getElementById("camgrid");
+  st.innerHTML=`<span class="spin"></span> running Grad-CAM++ (target=${CLASSES[target]}) …`;
+  grid.innerHTML="";
+  try{
+    const r=await fetch(`/gradcam?dataset=${DS}&pid=${encodeURIComponent(CUR.pid)}&target=${target}`);
+    const j=await r.json();
+    if(j.error){st.innerHTML=`<span class="bad">error: ${j.error}</span>`;return;}
+    st.innerHTML=`live probs — normal ${j.probs.normal} · near ${j.probs.near_normal} · abn ${j.probs.abnormal} · ${j.n_slices} slices · heatmap → <b>${j.target_name}</b>`;
+    grid.innerHTML=j.slices.map(s=>`
+      <div class="cell">
+        <img class="toggleimg" src="${s.overlay}" data-o="${s.overlay}" data-r="${s.raw}" data-showing="o" title="click to toggle raw / overlay">
+        <div class="meta"><span>slice #${s.idx}</span><span>attn ${s.attn}</span></div>
+      </div>`).join("");
+    grid.querySelectorAll(".toggleimg").forEach(img=>img.onclick=()=>{
+      const o=img.dataset.showing==="o"; img.src=o?img.dataset.r:img.dataset.o; img.dataset.showing=o?"r":"o";
+    });
+  }catch(e){ st.innerHTML=`<span class="bad">request failed: ${e}</span>`; }
+}
+document.getElementById("dclose").onclick=()=>document.getElementById("drawer").classList.remove("open");
+document.addEventListener("keydown",e=>{if(e.key==="Escape")document.getElementById("drawer").classList.remove("open");});
+
+// ---------- header row + wiring ----------
+function buildHeader(){
+  const hr=document.getElementById("hrow"); hr.innerHTML="";
+  COLS.forEach(([lbl,key])=>{
+    const th=document.createElement("th"); th.textContent=lbl;
+    th.onclick=()=>{ if(sortKey===key)sortDir*=-1; else{sortKey=key;sortDir=1;} sortView(); PAGE=0; render(); };
+    hr.appendChild(th);
+  });
+}
+["q","fActual","fPred","fBucket","fWrong","fFalseClear"].forEach(id=>{
+  document.getElementById(id).addEventListener("input",applyFilters);
+});
+document.getElementById("op").addEventListener("change",()=>{enrich();applyFilters();});
+document.getElementById("prev").onclick=()=>{if(PAGE>0){PAGE--;render();}};
+document.getElementById("next").onclick=()=>{PAGE++;render();};
+
+fetch("/cases.json").then(r=>r.json()).then(d=>{
+  DATA=d; DS=Object.keys(d.datasets)[0];
+  buildHeader(); buildTabs(); buildStats(); enrich(); applyFilters();
+});
+</script>
+</body>
+</html>

@@ -21,6 +21,18 @@ import os, io, sys, json, base64, argparse, threading, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+def soft_overlay(img_uint8, cam, max_alpha=0.6):
+    """Jet heatmap blended over the CT with per-pixel alpha = CAM intensity.
+    Unlike a flat-alpha blend (which tints the whole brain jet-BLUE where CAM~0,
+    making every map look 'blue'), cool regions here stay as the raw CT and only
+    salient regions get colour -> the hot spot pops and differs by target class."""
+    import numpy as np
+    import matplotlib.cm as cm
+    heat = (cm.jet(cam)[..., :3] * 255)                      # HxWx3
+    a = (cam[..., None] * max_alpha)                         # HxWx1 in [0,max_alpha]
+    return (a * heat + (1 - a) * img_uint8).astype(np.uint8)
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Code repo (for importing config/models/infer/xai and the default checkpoint).
 # Explicit so this app can live anywhere (e.g. copied to disk_vdc); override with
@@ -60,30 +72,86 @@ class Explainer:
         self.model, self.cfg = model, cfg
         print(f"[model] ready (epoch {ck.get('epoch')}, image_size {cfg.image_size})", flush=True)
 
+    @staticmethod
+    def _series_dirs(study_path):
+        """Immediate sub-folders holding .dcm = one series each. Matches the
+        evaluation pipeline, which scores each series separately (the study
+        probability is then the mean over series). Falls back to the study dir."""
+        import glob
+        subs = [d for d in sorted(glob.glob(os.path.join(study_path, "*")))
+                if os.path.isdir(d) and glob.glob(os.path.join(d, "**", "*.dcm"), recursive=True)]
+        return subs if subs else [study_path]
+
+    @staticmethod
+    def _eval_bag(series_dir, cfg):
+        """Build a series bag EXACTLY like StudyMILDataset in eval mode: sort by
+        InstanceNumber, evenly-spaced subsample to max_slices_per_study, multiwindow
+        + eval transforms. This is what makes the live probs match series_probs_*.csv
+        (infer.load_study instead takes the FIRST 96 slices -> different bag)."""
+        import glob, numpy as np, torch, pydicom
+        from data.dicom_dataset import _instance_number
+        from data.transforms import build_transforms, dicom_to_multiwindow
+        paths = sorted(glob.glob(os.path.join(series_dir, "**", "*.dcm"), recursive=True))
+        if not paths:
+            paths = [p for p in glob.glob(os.path.join(series_dir, "**", "*"), recursive=True)
+                     if os.path.isfile(p)]
+        paths = sorted(paths, key=_instance_number)
+        n = len(paths)
+        if n == 0:
+            return None, []
+        k = min(cfg.max_slices_per_study, n)
+        chosen = np.linspace(0, n - 1, k).round().astype(int).tolist()
+        tf = build_transforms(cfg, train=False)
+        tiles, kept = [], []
+        for j in chosen:
+            try:
+                ds = pydicom.dcmread(paths[j])
+                tiles.append(tf(dicom_to_multiwindow(ds, cfg.windows)))
+                kept.append(paths[j])
+            except Exception:
+                pass
+        if not tiles:
+            return None, []
+        return torch.stack(tiles), kept
+
     def explain(self, study_path, target):
         import torch
         import numpy as np
         from PIL import Image
-        from infer import load_study
-        from xai.gradcampp import GradCAMpp, denormalize, overlay
+        from xai.gradcampp import GradCAMpp, denormalize
         with self.lock:
             self._ensure()
             cfg = self.cfg
             if target is None:
                 target = cfg.num_classes - 1
             target = max(0, min(int(target), cfg.num_classes - 1))
-            bag, paths = load_study(study_path, cfg)
-            bag = bag.to(self.device)
-            mask = torch.ones(1, bag.size(0), dtype=torch.bool, device=self.device)
-            with torch.no_grad():
-                logits, attn = self.model(bag.unsqueeze(0), mask, return_attn=True)
-                prob = torch.softmax(logits, 1)[0].cpu().numpy()
-                attn = attn[0].cpu().numpy()
 
             def png_b64(arr):
                 buf = io.BytesIO()
                 Image.fromarray(arr).save(buf, format="PNG")
                 return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+            # Score EACH series separately (as in eval); study prob = mean over series.
+            series = []
+            for sd in self._series_dirs(study_path):
+                bag, paths = self._eval_bag(sd, cfg)
+                if bag is None:
+                    continue
+                bag = bag.to(self.device)
+                mask = torch.ones(1, bag.size(0), dtype=torch.bool, device=self.device)
+                with torch.no_grad():
+                    logits, attn = self.model(bag.unsqueeze(0), mask, return_attn=True)
+                    prob = torch.softmax(logits, 1)[0].cpu().numpy()
+                    attn = attn[0].cpu().numpy()
+                series.append({"name": os.path.basename(sd.rstrip("/")), "bag": bag,
+                               "paths": paths, "prob": prob, "attn": attn})
+            if not series:
+                raise RuntimeError("no readable series/slices for this study")
+
+            mean_prob = np.mean([s["prob"] for s in series], axis=0)
+            # Grad-CAM++ on the PRIMARY (largest) series' top-attended slices.
+            primary = max(series, key=lambda s: s["bag"].size(0))
+            bag, attn, paths = primary["bag"], primary["attn"], primary["paths"]
 
             cam = GradCAMpp(self.model, cfg.gradcam_layer)
             slices = []
@@ -92,11 +160,12 @@ class Explainer:
                 for rank, i in enumerate(top_idx):
                     i = int(i)
                     slice_t = bag[i].clone().requires_grad_(True)
-                    heat = cam(slice_t, target_class=target)
+                    heat = cam(slice_t, target_class=target)      # HxW in [0,1]
                     img = denormalize(bag[i], cfg.norm_mean, cfg.norm_std)
-                    blended = overlay(img, heat)
+                    blended = soft_overlay(img, heat)
                     slices.append({
                         "rank": rank, "idx": i, "attn": round(float(attn[i]), 4),
+                        "cam_peak": round(float(heat.max()), 3),   # 0 => flat (all-blue) map
                         "file": os.path.basename(paths[i]) if i < len(paths) else "",
                         "raw": png_b64(img), "overlay": png_b64(blended),
                     })
@@ -104,10 +173,15 @@ class Explainer:
                 cam.remove()
             return {
                 "study_path": study_path,
-                "n_slices": int(bag.size(0)),
+                "n_slices": int(sum(s["bag"].size(0) for s in series)),
+                "n_series": len(series),
+                "primary_series": primary["name"],
                 "target": target,
                 "target_name": cfg.class_names[target],
-                "probs": {cfg.class_names[j]: round(float(prob[j]), 4) for j in range(cfg.num_classes)},
+                "probs": {cfg.class_names[j]: round(float(mean_prob[j]), 4) for j in range(cfg.num_classes)},
+                "series": [{"name": s["name"], "n_slices": int(s["bag"].size(0)),
+                            "probs": {cfg.class_names[j]: round(float(s["prob"][j]), 4) for j in range(cfg.num_classes)}}
+                           for s in series],
                 "slices": slices,
             }
 

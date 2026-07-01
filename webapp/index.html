@@ -40,6 +40,7 @@
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
   .path{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
   .iuid{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .findcell{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-size:11.8px}
   .badge{display:inline-block;padding:2px 8px;border-radius:11px;font-size:11px;font-weight:650}
   .b-normal{background:rgba(63,185,80,.16);color:var(--normal)}
   .b-near{background:rgba(210,153,34,.16);color:var(--near)}
@@ -90,8 +91,14 @@
 </header>
 
 <div class="controls">
-  <label>Operating point (Stage-1 abnormal-sensitivity)
-    <select id="op"></select>
+  <label>Stage-1 sensitivity · abnormal <b id="s1v" style="color:var(--abn)">0.98</b>
+    <input type="range" id="s1" min="0.80" max="0.99" step="0.01" value="0.98" style="width:170px">
+  </label>
+  <label>Stage-2 sensitivity · near_normal <b id="s2v" style="color:var(--near)">0.95</b>
+    <input type="range" id="s2" min="0.80" max="0.99" step="0.01" value="0.95" style="width:170px">
+  </label>
+  <label style="justify-content:flex-end">thresholds
+    <span class="mono muted" id="thrinfo" style="padding-top:6px"></span>
   </label>
   <label>Actual class
     <select id="fActual"><option value="">all</option><option>normal</option><option>near_normal</option><option>abnormal</option></select>
@@ -129,9 +136,11 @@ const CLASSES = ["normal","near_normal","abnormal"];
 const SHORT = {normal:"b-normal", near_normal:"b-near", abnormal:"b-abn"};
 const COLS = [
   ["#","idx"],["study_path / id","path"],["StudyInstanceUID","iuid"],
-  ["Actual (radiologist)","actual"],["Cascade prediction","pred"],
+  ["Actual (radiologist)","actual"],["Findings (radiologist)","findings"],
+  ["Cascade prediction","pred"],
   ["Triage","bucket"],["p(normal/near/abn)","probs"],["✓","ok"]
 ];
+function esc(s){return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 let DATA=null, DS="heldout", PAGE=0, PER=200, sortKey="idx", sortDir=1, VIEW=[];
 
 function classBadge(name){return `<span class="badge ${SHORT[name]||''}">${name}</span>`;}
@@ -145,8 +154,12 @@ const BUCKET_LBL={escalate:"ESCALATE",light:"LIGHT REVIEW",autoclear:"AUTO-CLEAR
 const BUCKET_COL={escalate:"var(--abn)",light:"var(--near)",autoclear:"var(--normal)"};
 
 function currentThr(){
-  const op=document.getElementById("op").value;
-  return DATA.datasets[DS].thresholds[op];
+  const t=DATA.datasets[DS].thresholds;
+  const s1=parseFloat(document.getElementById("s1").value).toFixed(2);
+  const s2=parseFloat(document.getElementById("s2").value).toFixed(2);
+  const e=t[s1]||t["0.98"];
+  const T2=(e.T2[s2]!=null)?e.T2[s2]:Object.values(e.T2)[0];
+  return {T1:e.T1, T2:T2, s1:s1, s2:s2};
 }
 function enrich(){
   const {T1,T2}=currentThr();
@@ -186,6 +199,7 @@ function sortView(){
     else if(k==="path"){x=a.study_path;y=b.study_path;}
     else if(k==="iuid"){x=a.iuid;y=b.iuid;}
     else if(k==="actual"){x=a.actual_idx;y=b.actual_idx;}
+    else if(k==="findings"){x=a.findings||"";y=b.findings||"";}
     else if(k==="pred"){x=a._predIdx;y=b._predIdx;}
     else if(k==="bucket"){x=a._bucket;y=b._bucket;}
     else if(k==="probs"){x=a.p_abn;y=b.p_abn;}
@@ -207,6 +221,7 @@ function render(){
       <td><div class="path mono" title="${c.study_path}">${c.study_path||"—"}</div><div class="mono muted">${c.pid}</div></td>
       <td class="iuid mono" title="${c.iuid}">${c.iuid||"—"}</td>
       <td>${actualCell}</td>
+      <td class="findcell" title="${esc(c.findings)}">${c.findings?esc(c.findings.split("|").map(s=>s.trim()).join(" · ")):'<span class="muted">—</span>'}</td>
       <td>${classBadge(c._pred)}</td>
       <td class="bucket" style="color:${BUCKET_COL[c._bucket]}">${BUCKET_LBL[c._bucket]}</td>
       <td>${bar} <span class="mono muted">${c.p_normal.toFixed(2)}/${c.p_near.toFixed(2)}/${c.p_abn.toFixed(2)}</span></td>
@@ -219,9 +234,20 @@ function render(){
   document.getElementById("pinfo").textContent=`page ${PAGE+1} / ${pages}  ·  showing ${slice.length} of ${total}`;
   document.getElementById("prev").disabled=PAGE<=0;
   document.getElementById("next").disabled=PAGE>=pages-1;
-  // summary
-  const fc=VIEW.filter(c=>c._falseClear).length, wrong=VIEW.filter(c=>!c._correct).length;
-  document.getElementById("tinfo").innerHTML=`matched <b>${total}</b> · mispredicted ${wrong} · <span class="bad">false-clears ${fc}</span>`;
+  // summary — auto-clear bucket distribution over the WHOLE dataset at the current operating point
+  const wrong=VIEW.filter(c=>!c._correct).length;
+  const ac=DATA.datasets[DS].cases.filter(c=>c._bucket==="autoclear");
+  const acN=ac.filter(c=>c.actual_idx===0).length;
+  const acNe=ac.filter(c=>c.actual_idx===1).length;
+  const acA=ac.filter(c=>c.actual_idx===2).length;
+  const miss=acNe+acA, missPct=ac.length?(100*miss/ac.length).toFixed(1):"0.0";
+  document.getElementById("tinfo").innerHTML=
+    `matched <b>${total}</b> · mispredicted ${wrong} &nbsp;|&nbsp; `+
+    `auto-clear bucket <b>${ac.length}</b>: `+
+    `<span class="ok">normal ${acN}</span> · `+
+    `<span style="color:var(--near)">near ${acNe}</span> · `+
+    `<span class="bad">abn ${acA}</span> `+
+    `<span class="muted">(false-clear ${miss}/${ac.length} = ${missPct}%)</span>`;
 }
 
 function buildTabs(){
@@ -231,7 +257,7 @@ function buildTabs(){
     const el=document.createElement("div");
     el.className="tab"+(k===DS?" active":"");
     el.textContent=d.name+` (${d.n_studies})`;
-    el.onclick=()=>{DS=k; buildTabs(); buildStats(); enrich(); applyFilters();};
+    el.onclick=()=>{DS=k; buildTabs(); buildStats(); updateThrLabels(); enrich(); applyFilters();};
     t.appendChild(el);
   });
 }
@@ -242,15 +268,18 @@ function buildStats(){
     `<span>studies <b>${d.n_studies}</b></span>`+
     `<span>normal <b>${c.normal}</b> · near <b>${c.near_normal}</b> · abn <b>${c.abnormal}</b></span>`+
     `<span>AUC abn-vs-rest <b>${d.auc_abn_vs_rest}</b> · near-vs-normal <b>${d.auc_near_vs_normal??'—'}</b></span>`;
-  const op=document.getElementById("op");
-  const keep=op.value;
-  op.innerHTML="";
-  Object.keys(d.thresholds).sort().forEach(k=>{
-    const o=document.createElement("option"); o.value=k;
-    o.textContent=`abn-sens ${k}  (T1=${d.thresholds[k].T1.toFixed(3)}, T2=${d.thresholds[k].T2.toFixed(3)})`;
-    op.appendChild(o);
-  });
-  op.value=(keep && d.thresholds[keep])?keep:"0.98";
+  // configure slider ranges from the dataset grid (defaults on first load only)
+  const s1=document.getElementById("s1"), s2=document.getElementById("s2");
+  const v1=d.s1_values, v2=d.s2_values;
+  s1.min=v1[0]; s1.max=v1[v1.length-1];
+  s2.min=v2[0]; s2.max=v2[v2.length-1];
+  if(!s1.dataset.init){ s1.value=d.s1_default||"0.98"; s2.value=d.s2_default||"0.95"; s1.dataset.init="1"; }
+}
+function updateThrLabels(){
+  const t=currentThr();
+  document.getElementById("s1v").textContent=t.s1;
+  document.getElementById("s2v").textContent=t.s2;
+  document.getElementById("thrinfo").textContent=`T1=${t.T1.toFixed(3)}  T2=${t.T2.toFixed(3)}`;
 }
 
 // ---------- drawer / GradCAM ----------
@@ -319,13 +348,15 @@ function buildHeader(){
 ["q","fActual","fPred","fBucket","fWrong","fFalseClear"].forEach(id=>{
   document.getElementById(id).addEventListener("input",applyFilters);
 });
-document.getElementById("op").addEventListener("change",()=>{enrich();applyFilters();});
+["s1","s2"].forEach(id=>document.getElementById(id).addEventListener("input",()=>{
+  updateThrLabels(); enrich(); applyFilters();
+}));
 document.getElementById("prev").onclick=()=>{if(PAGE>0){PAGE--;render();}};
 document.getElementById("next").onclick=()=>{PAGE++;render();};
 
 fetch("/cases.json").then(r=>r.json()).then(d=>{
   DATA=d; DS=Object.keys(d.datasets)[0];
-  buildHeader(); buildTabs(); buildStats(); enrich(); applyFilters();
+  buildHeader(); buildTabs(); buildStats(); updateThrLabels(); enrich(); applyFilters();
 });
 </script>
 </body>

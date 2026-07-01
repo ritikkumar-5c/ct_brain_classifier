@@ -59,7 +59,12 @@ class GradCAMpp:
         denom = 2 * g2 + sum_a * g3
         alpha = g2 / (denom + 1e-7)
         weights = (alpha * F.relu(g)).sum(dim=(1, 2))             # C
-        cam = F.relu((weights[:, None, None] * A).sum(0))         # h x w
+        # Combine over POSITIVE activations only. This conv layer's outputs are
+        # signed (not post-ReLU), so weighting signed A and then ReLU can zero the
+        # ENTIRE map for the dominant/most-confident class (all w*A < 0) -> a flat,
+        # all-blue heatmap. relu(A) conforms to Grad-CAM++'s non-negative feature-map
+        # assumption and keeps the map focused and non-empty for every target class.
+        cam = F.relu((weights[:, None, None] * F.relu(A)).sum(0)) # h x w
         cam = cam - cam.min()
         cam = cam / (cam.max() + 1e-7)
         cam = F.interpolate(cam[None, None], size=slice_tensor.shape[1:],

@@ -28,8 +28,13 @@ REPO = "/root/ritikkumar/ct_brain_classifier"
 RUN = os.path.join(REPO, "runs/maxvit384_3class_clinical_v3")
 CLASS_NAMES = ("normal", "near_normal", "abnormal")
 
-S1_TARGETS = [0.95, 0.98, 0.99]   # abnormal-sensitivity operating points (Stage 1)
-S2_TARGET = 0.95                  # near_normal-sensitivity target (Stage 2)
+# Both stages are user-controllable in the web UI, so precompute a grid of
+# thresholds over (Stage-1 abnormal-sensitivity) x (Stage-2 near-sensitivity).
+# T1 depends only on the S1 target; T2 depends on BOTH (it is fit on the val
+# studies that survive Stage 1, which depends on T1). Grid = 0.80..0.99 step .01.
+S1_GRID = [round(0.80 + 0.01 * i, 2) for i in range(20)]
+S2_GRID = [round(0.80 + 0.01 * i, 2) for i in range(20)]
+S1_DEFAULT, S2_DEFAULT = 0.98, 0.95
 
 
 # ---------------------------------------------------------------- cascade math
@@ -65,15 +70,15 @@ def thr_at(y, score, poslab, target):
 
 
 def cascade_thresholds(vy, vP):
-    """Return {s1_target: {'T1':..,'T2':..}} computed on the validation set."""
+    """Return {s1: {'T1':t1, 'T2': {s2: t2, ...}}} over the S1xS2 grid (val)."""
     out = {}
-    for s1 in S1_TARGETS:
+    for s1 in S1_GRID:
         T1 = thr_at(vy, vP[:, 2], 2, s1)
         vpass = vP[:, 2] < T1
         vadj = vP[vpass, 1] / (vP[vpass, 1] + vP[vpass, 0] + 1e-9)
         m = vy[vpass] != 2
-        T2 = thr_at(vy[vpass][m], vadj[m], 1, S2_TARGET)
-        out[f"{s1:.2f}"] = {"T1": T1, "T2": T2}
+        t2map = {f"{s2:.2f}": thr_at(vy[vpass][m], vadj[m], 1, s2) for s2 in S2_GRID}
+        out[f"{s1:.2f}"] = {"T1": T1, "T2": t2map}
     return out
 
 
@@ -178,7 +183,10 @@ def build_dataset(name, run_dir, split_csv, folder_meta=None):
         "counts": counts,
         "auc_abn_vs_rest": round(auc_abn, 4),
         "auc_near_vs_normal": round(auc_near, 4) if auc_near is not None else None,
-        "s2_target": S2_TARGET,
+        "s1_values": [f"{s:.2f}" for s in S1_GRID],
+        "s2_values": [f"{s:.2f}" for s in S2_GRID],
+        "s1_default": f"{S1_DEFAULT:.2f}",
+        "s2_default": f"{S2_DEFAULT:.2f}",
         "thresholds": thresholds,
         "cases": cases,
     }

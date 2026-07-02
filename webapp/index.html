@@ -74,6 +74,8 @@
                  border-radius:6px;padding:7px 13px;cursor:pointer;font-weight:600}
   .camctl button.gen{background:var(--accent);color:#fff;border-color:var(--accent)}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:12px}
+  .camser{margin-top:14px}
+  .serhead{font-size:12.5px;padding:6px 9px;background:var(--panel2);border:1px solid var(--line);border-radius:7px}
   .cell{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px}
   .cell img{width:100%;border-radius:5px;display:block;background:#000;image-rendering:auto}
   .cell .meta{font-size:11px;color:var(--dim);margin-top:5px;display:flex;justify-content:space-between}
@@ -309,7 +311,7 @@ function openDrawer(c){
       <button data-t="0">normal</button>
       <span id="camstatus" class="muted"></span>
     </div>
-    <div id="camgrid" class="grid"></div>`;
+    <div id="camgrid"></div>`;
   document.querySelectorAll(".camctl button").forEach(b=>b.onclick=()=>runCam(parseInt(b.dataset.t)));
   document.getElementById("drawer").classList.add("open");
   document.getElementById("camgrid").innerHTML=`<div class="muted">Choose a target class above to render Grad-CAM++ overlays for the top-attended slices.</div>`;
@@ -322,11 +324,15 @@ async function runCam(target){
     const r=await fetch(`/gradcam?dataset=${DS}&pid=${encodeURIComponent(CUR.pid)}&target=${target}`);
     const j=await r.json();
     if(j.error){st.innerHTML=`<span class="bad">error: ${j.error}</span>`;return;}
-    st.innerHTML=`live probs — normal ${j.probs.normal} · near ${j.probs.near_normal} · abn ${j.probs.abnormal} · ${j.n_slices} slices · heatmap → <b>${j.target_name}</b>`;
-    grid.innerHTML=j.slices.map(s=>`
-      <div class="cell">
-        <img class="toggleimg" src="${s.overlay}" data-o="${s.overlay}" data-r="${s.raw}" data-showing="o" title="click to toggle raw / overlay">
-        <div class="meta"><span>slice #${s.idx}</span><span>attn ${s.attn}</span></div>
+    st.innerHTML=`study-mean probs — normal ${j.probs.normal} · near ${j.probs.near_normal} · abn ${j.probs.abnormal} · ${j.n_series} series / ${j.n_slices} slices · heatmap → <b>${j.target_name}</b>`;
+    grid.innerHTML=j.series.map(se=>`
+      <div class="camser">
+        <div class="serhead">series <b>${se.name}</b> <span class="muted">· ${se.n_slices} slices · abn ${se.probs.abnormal} / near ${se.probs.near_normal} / normal ${se.probs.normal}</span></div>
+        <div class="grid">${se.slices.map(s=>`
+          <div class="cell">
+            <img class="toggleimg" src="${s.overlay}" data-o="${s.overlay}" data-r="${s.raw}" data-showing="o" title="click to toggle raw / overlay">
+            <div class="meta"><span>slice #${s.idx}</span><span>attn ${s.attn}</span></div>
+          </div>`).join("")}</div>
       </div>`).join("");
     grid.querySelectorAll(".toggleimg").forEach(img=>img.onclick=()=>{
       const o=img.dataset.showing==="o"; img.src=o?img.dataset.r:img.dataset.o; img.dataset.showing=o?"r":"o";

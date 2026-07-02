@@ -149,25 +149,31 @@ class Explainer:
                 raise RuntimeError("no readable series/slices for this study")
 
             mean_prob = np.mean([s["prob"] for s in series], axis=0)
-            # Grad-CAM++ on the PRIMARY (largest) series' top-attended slices.
-            primary = max(series, key=lambda s: s["bag"].size(0))
-            bag, attn, paths = primary["bag"], primary["attn"], primary["paths"]
-
+            # Grad-CAM++ on the top-attended slices of EVERY series (largest first).
+            series.sort(key=lambda s: s["bag"].size(0), reverse=True)
             cam = GradCAMpp(self.model, cfg.gradcam_layer)
-            slices = []
+            out_series = []
             try:
-                top_idx = np.argsort(attn)[::-1][: self.topk]
-                for rank, i in enumerate(top_idx):
-                    i = int(i)
-                    slice_t = bag[i].clone().requires_grad_(True)
-                    heat = cam(slice_t, target_class=target)      # HxW in [0,1]
-                    img = denormalize(bag[i], cfg.norm_mean, cfg.norm_std)
-                    blended = soft_overlay(img, heat)
-                    slices.append({
-                        "rank": rank, "idx": i, "attn": round(float(attn[i]), 4),
-                        "cam_peak": round(float(heat.max()), 3),   # 0 => flat (all-blue) map
-                        "file": os.path.basename(paths[i]) if i < len(paths) else "",
-                        "raw": png_b64(img), "overlay": png_b64(blended),
+                for s in series:
+                    bag, attn, paths = s["bag"], s["attn"], s["paths"]
+                    top_idx = np.argsort(attn)[::-1][: self.topk]
+                    tiles = []
+                    for rank, i in enumerate(top_idx):
+                        i = int(i)
+                        slice_t = bag[i].clone().requires_grad_(True)
+                        heat = cam(slice_t, target_class=target)      # HxW in [0,1]
+                        img = denormalize(bag[i], cfg.norm_mean, cfg.norm_std)
+                        blended = soft_overlay(img, heat)
+                        tiles.append({
+                            "rank": rank, "idx": i, "attn": round(float(attn[i]), 4),
+                            "cam_peak": round(float(heat.max()), 3),
+                            "file": os.path.basename(paths[i]) if i < len(paths) else "",
+                            "raw": png_b64(img), "overlay": png_b64(blended),
+                        })
+                    out_series.append({
+                        "name": s["name"], "n_slices": int(bag.size(0)),
+                        "probs": {cfg.class_names[j]: round(float(s["prob"][j]), 4) for j in range(cfg.num_classes)},
+                        "slices": tiles,
                     })
             finally:
                 cam.remove()
@@ -175,14 +181,10 @@ class Explainer:
                 "study_path": study_path,
                 "n_slices": int(sum(s["bag"].size(0) for s in series)),
                 "n_series": len(series),
-                "primary_series": primary["name"],
                 "target": target,
                 "target_name": cfg.class_names[target],
                 "probs": {cfg.class_names[j]: round(float(mean_prob[j]), 4) for j in range(cfg.num_classes)},
-                "series": [{"name": s["name"], "n_slices": int(s["bag"].size(0)),
-                            "probs": {cfg.class_names[j]: round(float(s["prob"][j]), 4) for j in range(cfg.num_classes)}}
-                           for s in series],
-                "slices": slices,
+                "series": out_series,
             }
 
 
